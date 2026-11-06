@@ -7,7 +7,8 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from core.database import build_engine, build_session_factory
 from llm.limiter import RateLimiter
-from llm.repository import LlmCallRepositoryImpl
+from llm.repository import TODAY_UTC, LlmCallRepositoryImpl
+from llm.repository import WINDOW as WINDOW_CONDITION
 from llm.route import LlmRoute
 from llm.service import LlmCallService
 
@@ -243,11 +244,27 @@ async def test_yesterdays_provider_calls_do_not_use_up_the_daily_cap(
 async def test_todays_provider_calls_count_whatever_the_window(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
-    await insert_calls(session_factory, "provider", "1 second", count=3)
+    async with session_factory() as session:
+        await session.execute(
+            text(
+                "INSERT INTO llm_calls (kind, called_at) SELECT 'provider', "
+                "date_trunc('day', clock_timestamp() AT TIME ZONE 'UTC') "
+                "AT TIME ZONE 'UTC' FROM generate_series(1, 3)"
+            )
+        )
+        await session.commit()
 
     reservation = await reserve_once(
         session_factory, limit=100, window=0.1, daily_cap=3
     )
+
+    assert reservation.route == LlmRoute.KEYLESS
+
+
+async def test_a_daily_cap_of_zero_sends_every_call_down_the_keyless_path(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    reservation = await reserve_once(session_factory, daily_cap=0)
 
     assert reservation.route == LlmRoute.KEYLESS
 
@@ -267,3 +284,23 @@ async def test_the_database_rejects_an_unknown_kind(
 ) -> None:
     with pytest.raises(Exception, match="ck_llm_calls_kind"):
         await insert_calls(session_factory, kind, "1 second")
+
+
+@pytest.mark.parametrize(
+    "condition",
+    [
+        WINDOW_CONDITION,
+        f"kind = 'provider' AND called_at >= {TODAY_UTC}",
+    ],
+)
+async def test_the_time_conditions_can_use_the_called_at_index(
+    session_factory: async_sessionmaker[AsyncSession], condition: str
+) -> None:
+    async with session_factory() as session:
+        await session.execute(text("SET enable_seqscan = off"))
+        plan = await session.execute(
+            text(f"EXPLAIN SELECT count(*) FROM llm_calls WHERE {condition}"),
+            {"window": 60.0},
+        )
+
+    assert "Index Cond" in "\n".join(plan.scalars())

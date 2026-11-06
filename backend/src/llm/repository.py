@@ -9,10 +9,16 @@ from llm.route import LlmRoute
 
 RESERVATION_LOCK_ID = 7_364_892_002
 
+# clock_timestamp() is volatile, so the planner cannot use the called_at index
+# for it directly; wrapped in a subquery it is evaluated once and the index works.
 WINDOW = (
-    "called_at > clock_timestamp() - make_interval(secs => CAST(:window AS float8))"
+    "called_at > (SELECT clock_timestamp() "
+    "- make_interval(secs => CAST(:window AS float8)))"
 )
-TODAY_UTC = "date_trunc('day', clock_timestamp() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'"
+TODAY_UTC = (
+    "(SELECT date_trunc('day', clock_timestamp() AT TIME ZONE 'UTC') "
+    "AT TIME ZONE 'UTC')"
+)
 
 
 class LlmCallRepository(ABC):
