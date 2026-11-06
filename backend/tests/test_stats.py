@@ -85,3 +85,22 @@ async def test_database_rejects_an_unknown_status(
         )
         with pytest.raises(IntegrityError):
             await session.commit()
+
+
+@pytest.mark.parametrize("status", list(TicketStatus))
+async def test_database_accepts_every_status_in_the_enum(
+    session_factory: async_sessionmaker[AsyncSession], status: TicketStatus
+) -> None:
+    event = sample_event()
+    async with session_factory() as session:
+        session.add(
+            TicketEvent(
+                event_id=event["event_id"],
+                ticket_id=event["ticket_id"],
+                customer_email=event["customer_email"],
+                message=event["message"],
+                reply_url=event["reply_url"],
+                status=status,
+            )
+        )
+        await session.commit()

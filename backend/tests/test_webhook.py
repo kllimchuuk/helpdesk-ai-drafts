@@ -1,6 +1,7 @@
 import ast
 import asyncio
 import json
+import math
 import time
 from collections import Counter
 from pathlib import Path
@@ -19,7 +20,15 @@ from tickets.status import TicketStatus
 
 WEBHOOK = "/webhooks/helpdesk"
 SRC = Path(__file__).resolve().parents[1] / "src"
-SLOW_COMPONENTS = {"llm", "drafting", "kb", "delivery", "workers"}
+SLOW_COMPONENTS = {
+    "llm",
+    "drafting",
+    "kb",
+    "delivery",
+    "workers",
+    "httpx",
+    "anthropic",
+}
 
 
 async def test_new_event_is_accepted_and_stored(
@@ -117,6 +126,12 @@ async def test_follow_up_event_on_the_same_ticket_is_a_new_row(
         {"message": "x" * 20_001},
         {"reply_url": "not a url"},
         {"reply_url": "ftp://helpdesk.example.com/replies"},
+        {"event_id": "   "},
+        {"message": "   "},
+        {"message": "a\u0000b"},
+        {"event_id": "evt\u0000"},
+        {"ticket_id": "T-1\u0000"},
+        {"customer_email": "user@example.com\u0000"},
     ],
 )
 async def test_invalid_body_is_rejected_and_nothing_is_stored(
@@ -172,24 +187,7 @@ async def test_webhook_answers_fast(db_client: AsyncClient) -> None:
         assert response.status_code == 200
 
     durations.sort()
-    assert durations[int(len(durations) * 0.95) - 1] < 0.2
-
-
-async def test_acknowledged_event_is_visible_to_another_connection(
-    db_client: AsyncClient, session_factory: async_sessionmaker[AsyncSession]
-) -> None:
-    event = sample_event()
-
-    response = await db_client.post(WEBHOOK, json=event)
-
-    assert response.status_code == 200
-    async with session_factory() as session:
-        stored = await session.scalar(
-            select(TicketEvent.event_id).where(
-                TicketEvent.event_id == event["event_id"]
-            )
-        )
-    assert stored == event["event_id"]
+    assert durations[math.ceil(len(durations) * 0.95) - 1] < 0.2
 
 
 async def test_row_is_committed_before_the_response_starts(
