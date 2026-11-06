@@ -16,6 +16,7 @@ RUN uv sync --frozen --no-dev
 COPY src ./src
 COPY alembic.ini entrypoint.sh ./
 COPY migrations ./migrations
+COPY content ./content
 
 RUN chmod +x entrypoint.sh \
     && useradd --system --no-create-home app

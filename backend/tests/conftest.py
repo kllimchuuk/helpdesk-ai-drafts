@@ -11,8 +11,14 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from config import Settings
 from core.database import build_engine, build_session_factory
+from knowledge_base.loader import sync_articles
 from main import create_app
-from tests.helpers import alembic_config, drop_database, recreate_database
+from tests.helpers import (
+    KB_DIRECTORY,
+    alembic_config,
+    drop_database,
+    recreate_database,
+)
 
 
 def pytest_configure() -> None:
@@ -105,3 +111,8 @@ async def db_client(db_app: FastAPI) -> AsyncIterator[AsyncClient]:
     transport = ASGITransport(app=db_app, raise_app_exceptions=False)
     async with AsyncClient(transport=transport, base_url="http://test") as http:
         yield http
+
+
+@pytest_asyncio.fixture
+async def loaded_kb(session_factory: async_sessionmaker[AsyncSession]) -> None:
+    await sync_articles(session_factory, KB_DIRECTORY)
