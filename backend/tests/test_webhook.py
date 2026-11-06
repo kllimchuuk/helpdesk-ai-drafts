@@ -145,6 +145,20 @@ async def test_invalid_body_is_rejected_and_nothing_is_stored(
     assert await count_events(session_factory) == 0
 
 
+async def test_nul_in_the_reply_url_is_percent_encoded_and_stored_safely(
+    db_client: AsyncClient, session_factory: async_sessionmaker[AsyncSession]
+) -> None:
+    event = sample_event(reply_url="https://helpdesk.example.com/a\u0000b")
+
+    response = await db_client.post(WEBHOOK, json=event)
+
+    assert response.status_code == 200
+    async with session_factory() as session:
+        stored = await session.scalar(select(TicketEvent.reply_url))
+    assert "\x00" not in stored
+    assert stored.endswith("/a%00b")
+
+
 @pytest.mark.parametrize(
     "missing", ["event_id", "ticket_id", "customer_email", "message", "reply_url"]
 )

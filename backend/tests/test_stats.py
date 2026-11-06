@@ -1,5 +1,6 @@
 import pytest
 from httpx import AsyncClient
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from tests.helpers import sample_event
@@ -69,8 +70,6 @@ def test_statuses_match_the_spec() -> None:
 async def test_database_rejects_an_unknown_status(
     session_factory: async_sessionmaker[AsyncSession], status: str
 ) -> None:
-    from sqlalchemy.exc import IntegrityError
-
     event = sample_event()
     async with session_factory() as session:
         session.add(

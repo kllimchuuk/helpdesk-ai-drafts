@@ -17,12 +17,17 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from core.database import build_engine, translate_unavailable
 from core.exceptions import DatabaseUnavailableError
 from tests.helpers import sample_event
+from tickets.models import TicketEvent
 
 WEBHOOK = "/webhooks/helpdesk"
 
 
 def disconnect_error() -> DBAPIError:
     return DBAPIError("SELECT 1", {}, Exception("gone"), connection_invalidated=True)
+
+
+class ServerShutdown(Exception):
+    sqlstate = "57P01"
 
 
 @pytest.mark.parametrize(
@@ -33,6 +38,7 @@ def disconnect_error() -> DBAPIError:
         OperationalError("SELECT 1", {}, Exception("down")),
         InterfaceError("SELECT 1", {}, Exception("closed")),
         disconnect_error(),
+        DBAPIError("SELECT 1", {}, ServerShutdown("admin shutdown")),
         PoolTimeoutError("QueuePool limit of size 5 overflow 10 reached"),
     ],
 )
@@ -131,3 +137,26 @@ async def test_a_database_error_does_not_put_the_customer_message_in_the_respons
 
     assert response.status_code == 500
     assert "secret text" not in response.text
+
+
+async def test_a_real_database_error_keeps_the_customer_message_out_of_its_text(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    def row() -> TicketEvent:
+        return TicketEvent(
+            event_id="evt_same",
+            ticket_id="T-1",
+            customer_email="user@example.com",
+            message="secret customer text",
+            reply_url="https://helpdesk.example.com/r",
+        )
+
+    async with session_factory() as session:
+        session.add(row())
+        await session.commit()
+    async with session_factory() as session:
+        session.add(row())
+        with pytest.raises(IntegrityError) as error:
+            await session.commit()
+
+    assert "secret customer text" not in str(error.value)
