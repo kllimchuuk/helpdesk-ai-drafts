@@ -57,7 +57,7 @@ title: Відновлення пароля
 Article text...
 ```
 
-The backend container loads the files into PostgreSQL every time it starts, so to add or change an article edit the file and run `docker compose up -d --build backend`. Read one with `curl -s http://localhost:8080/api/kb/reset-password`. Search by ticket text is done inside the service (PostgreSQL trigram similarity plus full-text rank) and will be used when drafts are generated; see `docs/DECISIONS.md` for how it was tuned and how well it works.
+The backend container loads the files into PostgreSQL every time it starts, so to add or change an article edit the file and run `docker compose up -d --build backend`. Read one with `curl -s http://localhost:8080/api/kb/reset-password`. Search by ticket text is done inside the service (PostgreSQL trigram similarity plus full-text rank) and will be used when drafts are generated; see `docs/DECISIONS.md` for how it was tuned and how well it works. If an article file is invalid the loader logs a warning and the service keeps running with the articles already stored.
 
 ## Develop
 
