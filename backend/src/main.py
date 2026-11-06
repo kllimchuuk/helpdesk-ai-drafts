@@ -9,6 +9,7 @@ from config import Settings, settings
 from core.database import build_engine, build_session_factory
 from core.exceptions import AppException
 from health.router import router as health_router
+from kb.router import router as kb_router
 from tickets.router import router as tickets_router
 from webhooks.router import router as webhooks_router
 
@@ -64,6 +65,7 @@ def create_app(app_settings: Settings | None = None) -> FastAPI:
     app.include_router(health_router)
     app.include_router(webhooks_router)
     app.include_router(tickets_router)
+    app.include_router(kb_router)
 
     return app
 
