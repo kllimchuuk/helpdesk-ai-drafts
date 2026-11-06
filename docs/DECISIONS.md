@@ -93,3 +93,11 @@ Basis: review of slice S0 (`feat/project-skeleton`) found these dependencies wit
 1. **`pytest` and `pytest-asyncio` for tests, `httpx` for both tests and outbound HTTP, `uvicorn[standard]` to serve the app.**
    Why: the code is async, so tests need an async runner. `httpx.ASGITransport` calls the application in-process without a server, and the same library is the HTTP client for the helpdesk and the provider later, so no second client is added. `uvicorn[standard]` brings the faster event loop and HTTP parser.
    Changed: `backend/pyproject.toml`, `CLAUDE.md` (stack list).
+
+## 2026-11-06 - `src/` in the backend only
+
+Basis: owner's question during review of slice S0.
+
+1. **`backend/` keeps a `src/` directory; `frontend/` has none.**
+   Why: the backend is Python packages that import each other, so `src/` separates importable code from `tests/`, `migrations/`, `content/` and the packaging files, as in the owner's `cadence`. The frontend is a handful of static files with no imports, tests or build step, so a `src/` there would only add a level.
+   Changed: nothing; recorded so the asymmetry is explained.
