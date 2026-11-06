@@ -2,8 +2,8 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends
 
-from kb.schemas import ArticleResponse
-from kb.service import KbService, get_kb_service
+from knowledge_base.schemas import ArticleResponse
+from knowledge_base.service import KbService, get_kb_service
 
 router = APIRouter(prefix="/api/kb", tags=["kb"])
 

@@ -15,7 +15,7 @@ from core.registry import metadata
 from tickets.models import TicketEvent
 
 BACKEND_DIR = Path(__file__).resolve().parents[1]
-KB_DIRECTORY = BACKEND_DIR / "content" / "kb"
+KB_DIRECTORY = BACKEND_DIR / "content" / "knowledge_base"
 
 
 def sample_event(**overrides: str) -> dict[str, str]:

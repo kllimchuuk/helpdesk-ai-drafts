@@ -5,9 +5,9 @@ import pytest
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from kb.exceptions import ArticleFileError
-from kb.loader import parse_article, read_directory, sync_articles
-from kb.models import KbArticle
+from knowledge_base.exceptions import ArticleFileError
+from knowledge_base.loader import parse_article, read_directory, sync_articles
+from knowledge_base.models import KbArticle
 from tests.helpers import KB_DIRECTORY
 
 VALID = (

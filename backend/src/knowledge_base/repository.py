@@ -7,8 +7,8 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.database import get_db, translate_unavailable
-from kb.models import KbArticle
-from kb.schemas import ArticleScore, ParsedArticle
+from knowledge_base.models import KbArticle
+from knowledge_base.schemas import ArticleScore, ParsedArticle
 
 APOSTROPHES = "’ʼ'`"
 

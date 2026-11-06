@@ -5,7 +5,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     APP_ENV: str = "local"
-    KB_CONTENT_DIR: str = "content/kb"
+    KB_CONTENT_DIR: str = "content/knowledge_base"
     KB_MIN_SCORE: float = 0.4
     DATABASE_URL: str = "postgresql+asyncpg://postgres:postgres@db:5432/helpdesk"
     TEST_DATABASE_URL: str = (

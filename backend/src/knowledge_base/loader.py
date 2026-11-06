@@ -6,9 +6,14 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from config import Settings
 from core.database import build_engine, build_session_factory
-from kb.exceptions import ArticleFileError
-from kb.repository import KbRepositoryImpl
-from kb.schemas import MAX_SLUG_LENGTH, MAX_TITLE_LENGTH, SLUG_PATTERN, ParsedArticle
+from knowledge_base.exceptions import ArticleFileError
+from knowledge_base.repository import KbRepositoryImpl
+from knowledge_base.schemas import (
+    MAX_SLUG_LENGTH,
+    MAX_TITLE_LENGTH,
+    SLUG_PATTERN,
+    ParsedArticle,
+)
 
 logger = logging.getLogger(__name__)
 

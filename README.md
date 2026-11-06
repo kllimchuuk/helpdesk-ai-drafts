@@ -47,7 +47,7 @@ Stop with `docker compose down` (add `-v` to delete the database volume).
 
 ## Knowledge base
 
-The articles are Markdown files in `backend/content/kb/` about a fictional product (Vistara), written with Claude as the task asks. Each file starts with front matter and its name is the slug:
+The articles are Markdown files in `backend/content/knowledge_base/` about a fictional product (Vistara), written with Claude as the task asks. Each file starts with front matter and its name is the slug:
 
 ```
 ---

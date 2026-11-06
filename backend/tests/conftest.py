@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from config import Settings
 from core.database import build_engine, build_session_factory
-from kb.loader import sync_articles
+from knowledge_base.loader import sync_articles
 from main import create_app
 from tests.helpers import (
     KB_DIRECTORY,

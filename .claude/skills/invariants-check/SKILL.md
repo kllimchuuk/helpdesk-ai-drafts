@@ -9,7 +9,7 @@ For each item answer pass, fail or not touched, and point at the code or test th
 
 | ID | Look for | Red flag |
 |---|---|---|
-| I1 | The webhook route only validates, inserts and returns. | An import or call to `llm`, `drafting`, `kb` or `delivery` in `webhooks/`; an `await` on a network call before the response. |
+| I1 | The webhook route only validates, inserts and returns. | An import or call to `llm`, `drafting`, `knowledge_base` or `delivery` in `webhooks/`; an `await` on a network call before the response. |
 | I2 | `INSERT ... ON CONFLICT DO NOTHING` on a `UNIQUE(event_id)` column; duplicate returns 200 `duplicate`. | A `SELECT` for the event before the insert; catching `IntegrityError` after a separate existence check. |
 | I3 | The event row is committed before the 200; database errors map to 503. | Acknowledging before commit; an in-memory queue or background task holding the only copy. |
 | I4 | Every provider request, including the keyless one and retries, goes through the limiter (advisory lock + sliding window in `llm_calls`). | A direct SDK or `httpx` call that skips the limiter; a limiter held per process only. |

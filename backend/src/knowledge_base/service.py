@@ -5,10 +5,10 @@ from fastapi import Depends
 
 from config import Settings
 from core.dependencies import get_settings
-from kb.exceptions import KbArticleNotFoundError
-from kb.models import KbArticle
-from kb.repository import APOSTROPHES, KbRepository, get_kb_repository
-from kb.schemas import MAX_SLUG_LENGTH, SLUG_PATTERN, ArticleScore, KbMatch
+from knowledge_base.exceptions import KbArticleNotFoundError
+from knowledge_base.models import KbArticle
+from knowledge_base.repository import APOSTROPHES, KbRepository, get_kb_repository
+from knowledge_base.schemas import MAX_SLUG_LENGTH, SLUG_PATTERN, ArticleScore, KbMatch
 
 MAX_WORDS = 100
 MIN_WORD_LENGTH = 3

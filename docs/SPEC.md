@@ -201,7 +201,7 @@ backend/
   Dockerfile  entrypoint.sh           entrypoint: alembic upgrade, load KB, start uvicorn
   pyproject.toml  uv.lock             dependencies, ruff, pytest (pythonpath = src)
   alembic.ini  migrations/            one migration per slice
-  content/kb/*.md                     8 Ukrainian KB articles with front matter (slug, title)
+  content/knowledge_base/*.md                     8 Ukrainian KB articles with front matter (slug, title)
   src/
     main.py                           create_app, lifespan, error handlers, /health
     config.py                         Settings; defaults so compose works without .env
@@ -210,8 +210,8 @@ backend/
     webhooks/    router, schemas, service (ingest)
     tickets/     models, status, repository, service, schemas, exceptions,
                  router (/api/tickets, /api/stats)
-    kb/          models, repository, service (search), loader, schemas, exceptions,
-                 router (/api/kb/{slug})
+    knowledge_base/  models, repository, service (search), loader, schemas, exceptions,
+                     router (/api/kb/{slug})
     llm/         client (interface), anthropic_client, keyless, factory,
                  call log and limiter (models, repository, service, daily cap), schemas, exceptions
     drafting/    service, prompts, schemas

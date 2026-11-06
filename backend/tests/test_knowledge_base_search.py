@@ -5,11 +5,11 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from config import Settings
-from kb.loader import sync_articles
-from kb.models import KbArticle
-from kb.repository import KbRepository, KbRepositoryImpl
-from kb.schemas import ArticleScore, ParsedArticle
-from kb.service import MAX_WORDS, KbService, extract_words
+from knowledge_base.loader import sync_articles
+from knowledge_base.models import KbArticle
+from knowledge_base.repository import KbRepository, KbRepositoryImpl
+from knowledge_base.schemas import ArticleScore, ParsedArticle
+from knowledge_base.service import MAX_WORDS, KbService, extract_words
 
 TICKETS = [
     ("Не можу експортувати звіт у PDF", "export-report-pdf"),

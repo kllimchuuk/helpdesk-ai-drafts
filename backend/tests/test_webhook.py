@@ -23,7 +23,7 @@ SRC = Path(__file__).resolve().parents[1] / "src"
 SLOW_COMPONENTS = {
     "llm",
     "drafting",
-    "kb",
+    "knowledge_base",
     "delivery",
     "workers",
     "httpx",
