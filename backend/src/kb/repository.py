@@ -21,13 +21,19 @@ SCORE_QUERY = text(
                lower(translate(title || ' ' || body, :apostrophes, '')) AS norm_text
         FROM kb_articles
     )
-    SELECT n.slug, n.title,
-           (SELECT coalesce(avg(greatest(
-                       word_similarity(w.word, n.norm_title),
-                       word_similarity(w.word, n.norm_text))), 0)
-              FROM words w) AS trigram_score,
+    SELECT n.slug, n.title, agg.mean_best AS trigram_score, agg.strong_words,
            ts_rank(n.tsv, to_tsquery('simple', :tsquery), 32) AS fts_score
     FROM normalised n
+    CROSS JOIN LATERAL (
+        SELECT coalesce(avg(best), 0) AS mean_best,
+               count(*) FILTER (WHERE best >= CAST(:strong AS float8)) AS strong_words
+        FROM (
+            SELECT greatest(
+                       word_similarity(w.word, n.norm_title),
+                       word_similarity(w.word, n.norm_text)) AS best
+            FROM words w
+        ) per_word
+    ) agg
     """
 ).bindparams(bindparam("words", type_=ARRAY(Text)))
 
@@ -38,7 +44,9 @@ class KbRepository(ABC):
         raise NotImplementedError()
 
     @abstractmethod
-    async def score_articles(self, words: list[str]) -> list[ArticleScore]:
+    async def score_articles(
+        self, words: list[str], strong_similarity: float
+    ) -> list[ArticleScore]:
         raise NotImplementedError()
 
     @abstractmethod
@@ -55,13 +63,16 @@ class KbRepositoryImpl(KbRepository):
         return await self._session.get(KbArticle, slug)
 
     @translate_unavailable
-    async def score_articles(self, words: list[str]) -> list[ArticleScore]:
+    async def score_articles(
+        self, words: list[str], strong_similarity: float
+    ) -> list[ArticleScore]:
         rows = await self._session.execute(
             SCORE_QUERY,
             {
                 "words": words,
                 "tsquery": " | ".join(words),
                 "apostrophes": APOSTROPHES,
+                "strong": strong_similarity,
             },
         )
         return [
@@ -70,6 +81,7 @@ class KbRepositoryImpl(KbRepository):
                 title=row.title,
                 trigram_score=float(row.trigram_score),
                 fts_score=float(row.fts_score),
+                strong_words=int(row.strong_words),
             )
             for row in rows
         ]

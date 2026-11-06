@@ -134,3 +134,41 @@ async def test_containers_syncing_at_the_same_time_do_not_clash(
     async with session_factory() as session:
         total = await session.scalar(select(func.count()).select_from(KbArticle))
     assert total == len(read_directory(KB_DIRECTORY))
+
+
+async def test_an_empty_directory_is_refused_and_keeps_the_stored_articles(
+    session_factory: async_sessionmaker[AsyncSession], tmp_path: Path
+) -> None:
+    write(tmp_path, "reset-password", VALID)
+    await sync_articles(session_factory, tmp_path)
+    empty = tmp_path / "empty"
+    empty.mkdir()
+
+    with pytest.raises(ArticleFileError):
+        await sync_articles(session_factory, empty)
+
+    assert set(await stored(session_factory)) == {"reset-password"}
+
+
+async def test_a_missing_directory_is_refused_and_keeps_the_stored_articles(
+    session_factory: async_sessionmaker[AsyncSession], tmp_path: Path
+) -> None:
+    write(tmp_path, "reset-password", VALID)
+    await sync_articles(session_factory, tmp_path)
+
+    with pytest.raises(ArticleFileError):
+        await sync_articles(session_factory, tmp_path / "does-not-exist")
+
+    assert set(await stored(session_factory)) == {"reset-password"}
+
+
+def test_a_slug_that_is_too_long_is_rejected() -> None:
+    slug = "a" * 101
+
+    with pytest.raises(ArticleFileError):
+        parse_article(f"---\nslug: {slug}\ntitle: T\n---\nBody", f"{slug}.md")
+
+
+def test_a_title_that_is_too_long_is_rejected() -> None:
+    with pytest.raises(ArticleFileError):
+        parse_article(f"---\nslug: a\ntitle: {'T' * 256}\n---\nBody", "a.md")

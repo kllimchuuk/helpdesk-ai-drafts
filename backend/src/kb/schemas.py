@@ -1,6 +1,11 @@
+import re
 from dataclasses import dataclass
 
 from pydantic import BaseModel, ConfigDict
+
+SLUG_PATTERN = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
+MAX_SLUG_LENGTH = 100
+MAX_TITLE_LENGTH = 255
 
 
 @dataclass(frozen=True)
@@ -16,6 +21,7 @@ class ArticleScore:
     title: str
     trigram_score: float
     fts_score: float
+    strong_words: int
 
 
 class KbMatch(BaseModel):

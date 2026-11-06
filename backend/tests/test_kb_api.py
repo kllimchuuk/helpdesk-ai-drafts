@@ -17,7 +17,15 @@ async def test_an_article_is_returned_without_credentials(
 
 @pytest.mark.parametrize(
     "slug",
-    ["no-such-article", "EXPORT-REPORT-PDF", "%27%20OR%201%3D1"],
+    [
+        "no-such-article",
+        "EXPORT-REPORT-PDF",
+        "%27%20OR%201%3D1",
+        "%00",
+        "export%00",
+        "a" * 300,
+        "%D1%96",
+    ],
 )
 async def test_an_unknown_article_is_a_404(
     loaded_kb: None, db_client: AsyncClient, slug: str

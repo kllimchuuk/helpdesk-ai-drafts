@@ -1,6 +1,5 @@
 import asyncio
 import logging
-import re
 from pathlib import Path
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -9,11 +8,10 @@ from config import Settings
 from core.database import build_engine, build_session_factory
 from kb.exceptions import ArticleFileError
 from kb.repository import KbRepositoryImpl
-from kb.schemas import ParsedArticle
+from kb.schemas import MAX_SLUG_LENGTH, MAX_TITLE_LENGTH, SLUG_PATTERN, ParsedArticle
 
 logger = logging.getLogger(__name__)
 
-SLUG_PATTERN = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 FRONT_MATTER_KEYS = ("slug", "title")
 
 
@@ -40,12 +38,14 @@ def parse_article(text: str, source: str) -> ParsedArticle:
 
     slug = meta.get("slug", "")
     title = meta.get("title", "")
-    if not SLUG_PATTERN.match(slug):
+    if len(slug) > MAX_SLUG_LENGTH or not SLUG_PATTERN.fullmatch(slug):
         raise ArticleFileError(
             f"{source}: slug {slug!r} must be lowercase words joined by hyphens"
         )
-    if not title:
-        raise ArticleFileError(f"{source}: the title is empty")
+    if not title or len(title) > MAX_TITLE_LENGTH:
+        raise ArticleFileError(
+            f"{source}: the title must be 1-{MAX_TITLE_LENGTH} characters"
+        )
     body = "\n".join(lines[end + 1 :]).strip()
     if not body:
         raise ArticleFileError(f"{source}: the article has no text")

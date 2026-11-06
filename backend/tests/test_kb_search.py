@@ -8,7 +8,8 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from config import Settings
 from kb.loader import sync_articles
 from kb.models import KbArticle
-from kb.repository import KbRepositoryImpl
+from kb.repository import KbRepository, KbRepositoryImpl
+from kb.schemas import ArticleScore, ParsedArticle
 from kb.service import MAX_WORDS, KbService, extract_words
 
 TICKETS = [
@@ -45,6 +46,56 @@ HARDER_TICKETS = [
     ("Хочу видалити колегу з команди", "team-roles-and-invites"),
     ("Налаштувати щомісячну розсилку звіту на пошту директору", "scheduled-reports"),
     ("не приходить лист для скидання пароля", "reset-password"),
+]
+LONG_TICKETS = [
+    (
+        "Добрий день! Пишу вам вже втретє, бо проблема триває з понеділка і ми дуже "
+        "непокоїмося, адже від цього залежить робота нашого відділу та наших клієнтів. "
+        "Ми користуємось вашим сервісом вже другий рік і раніше все було добре. "
+        "Не можу експортувати звіт у PDF",
+        "export-report-pdf",
+    ),
+    (
+        "Добрий день, команда Vistara. Я адміністратор у нашій компанії, ми працюємо з "
+        "вашою платформою вже понад рік і загалом задоволені. Але сьогодні вранці я не "
+        "зміг зайти в свій акаунт, бо забув пароль, а лист для відновлення чомусь не "
+        "приходить на пошту.",
+        "reset-password",
+    ),
+    (
+        "Вітаю! Наш фінансовий відділ просить допомогти: ми хотіли б змінити тариф на "
+        "більший, а також отримати рахунок для бухгалтерії за попередній місяць, бо ми "
+        "не знаємо, де його завантажити.",
+        "billing-and-invoices",
+    ),
+    (
+        "Доброго дня. Наша команда розширюється, і ми хочемо запросити трьох нових "
+        "колег, але не розуміємо, як налаштувати їхні права, щоб вони могли лише "
+        "переглядати дашборди, а не змінювати їх.",
+        "team-roles-and-invites",
+    ),
+    (
+        "Привіт, розробники в нашій компанії інтегрують ваш сервіс у внутрішню "
+        "систему. Усе працювало нормально, але від учора наші запити до API почали "
+        "повертати помилку 429, хоча кількість запитів не змінювалась.",
+        "api-keys-and-limits",
+    ),
+]
+LONG_UNRELATED = [
+    "Добрий день! Хотів би дізнатися, чи можна замовити для нашої компанії "
+    "корпоративні подарунки до новорічних свят, адже ми шукаємо надійного "
+    "постачальника солодощів та сувенірів зі знижкою для великої кількості "
+    "співробітників.",
+    "Вітаю, мене цікавить інформація про вільні вакансії у вашій компанії, зокрема на "
+    "посаду менеджера з продажів, а також умови стажування для студентів останніх "
+    "курсів університету та можливість віддаленої роботи.",
+    "Доброго вечора. Підкажіть, будь ласка, як дістатися від залізничного вокзалу до "
+    "вашого офісу в Києві, адже я приїжджаю потягом зі Львова і ще не знаю міста, а "
+    "також чи є поруч безкоштовна парковка.",
+    "Скажіть, чи плануєте ви проводити цього року конференцію для клієнтів і "
+    "партнерів, бо ми хотіли б виступити з доповіддю про наш досвід, і чи можна "
+    "заздалегідь "
+    "отримати програму заходу та список спікерів.",
 ]
 UNRELATED = [
     "Розкажіть про історію Київської Русі і її князів",
@@ -119,14 +170,13 @@ async def test_at_most_three_matches_in_descending_score_order(
     assert all(0.0 <= score <= 1.0 for score in scores)
 
 
-async def test_a_higher_threshold_returns_fewer_matches(
-    loaded_kb: None, session_factory: async_sessionmaker[AsyncSession]
-) -> None:
-    async with session_factory() as session:
-        loose = await service(session, min_score=0.0).search(TICKETS[0][0])
-        strict = await service(session, min_score=0.99).search(TICKETS[0][0])
+async def test_a_higher_threshold_returns_fewer_matches() -> None:
+    repository = FixedScores([score(0, 0.6)])
 
-    assert len(loose) > len(strict)
+    loose = await KbService(repository, min_score=0.0).search("експорт звіту")
+    strict = await KbService(repository, min_score=0.99).search("експорт звіту")
+
+    assert len(loose) == 1
     assert strict == []
 
 
@@ -193,11 +243,114 @@ async def test_apostrophes_in_the_article_do_not_hide_a_match(
 ) -> None:
     (tmp_path / "connections.md").write_text(
         "---\nslug: connections\ntitle: Підключення\n---\n"
-        "Налаштуйте з'єднання з базою даних у розділі підключень.\n"
+        f"Налаштуйте з{apostrophe}єднання з базою даних у розділі підключень.\n"
     )
     await sync_articles(session_factory, tmp_path)
 
     async with session_factory() as session:
-        matches = await service(session, min_score=0.8).search(f"з{apostrophe}єднання")
+        matches = await service(session, min_score=0.8).search("з\u02bcєднання")
 
     assert [match.slug for match in matches] == ["connections"]
+
+
+@pytest.mark.parametrize(("ticket", "expected"), LONG_TICKETS)
+async def test_a_long_ticket_still_finds_its_article_first(
+    loaded_kb: None,
+    session_factory: async_sessionmaker[AsyncSession],
+    ticket: str,
+    expected: str,
+) -> None:
+    async with session_factory() as session:
+        matches = await service(session).search(ticket)
+
+    assert matches, ticket
+    assert matches[0].slug == expected
+
+
+@pytest.mark.parametrize("ticket", LONG_UNRELATED)
+async def test_a_long_unrelated_ticket_matches_nothing(
+    loaded_kb: None, session_factory: async_sessionmaker[AsyncSession], ticket: str
+) -> None:
+    async with session_factory() as session:
+        matches = await service(session).search(ticket)
+
+    assert matches == []
+
+
+class FixedScores(KbRepository):
+    def __init__(self, scores: list[ArticleScore]) -> None:
+        self.scores = scores
+        self.words_seen: list[list[str]] = []
+
+    async def get_by_slug(self, slug: str) -> None:
+        return None
+
+    async def score_articles(
+        self, words: list[str], strong_similarity: float
+    ) -> list[ArticleScore]:
+        self.words_seen.append(words)
+        return self.scores
+
+    async def replace_all(self, articles: list[ParsedArticle]) -> None:
+        return None
+
+
+def score(strong_words: int, trigram: float) -> ArticleScore:
+    return ArticleScore(
+        slug="a",
+        title="A",
+        trigram_score=trigram,
+        fts_score=0.0,
+        strong_words=strong_words,
+    )
+
+
+@pytest.mark.parametrize(
+    ("strong_words", "trigram", "accepted"),
+    [
+        (0, 0.2, False),
+        (2, 0.3, False),
+        (3, 0.3, True),
+        (0, 0.6, True),
+        (2, 0.6, True),
+    ],
+)
+async def test_an_article_needs_a_high_score_or_three_strong_words(
+    strong_words: int, trigram: float, accepted: bool
+) -> None:
+    repository = FixedScores([score(strong_words, trigram)])
+
+    matches = await KbService(repository, min_score=0.4).search("експорт звіту")
+
+    assert bool(matches) is accepted
+
+
+async def test_the_words_passed_to_the_database_are_capped() -> None:
+    repository = FixedScores([score(0, 0.0)])
+    query = " ".join(f"слово{number}" for number in range(5000))
+
+    await KbService(repository, min_score=0.4).search(query)
+
+    assert len(repository.words_seen[0]) == MAX_WORDS
+
+
+async def test_searching_an_empty_knowledge_base_finds_nothing(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    async with session_factory() as session:
+        matches = await service(session).search("Не можу експортувати звіт у PDF")
+
+    assert matches == []
+
+
+@pytest.mark.parametrize(
+    "query",
+    ["x\u00b2 \u00bd \u0663\u0663\u0663 \uff41\uff42\uff43", "\u0301\u0301\u0301 ﷺ"],
+)
+async def test_unusual_unicode_does_not_break_the_search(
+    loaded_kb: None, session_factory: async_sessionmaker[AsyncSession], query: str
+) -> None:
+    async with session_factory() as session:
+        matches = await service(session).search(query)
+
+    assert matches == []

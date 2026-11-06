@@ -7,15 +7,17 @@ from config import Settings
 from core.dependencies import get_settings
 from kb.exceptions import KbArticleNotFoundError
 from kb.models import KbArticle
-from kb.repository import KbRepository, get_kb_repository
-from kb.schemas import KbMatch
+from kb.repository import APOSTROPHES, KbRepository, get_kb_repository
+from kb.schemas import MAX_SLUG_LENGTH, SLUG_PATTERN, ArticleScore, KbMatch
 
-MAX_WORDS = 40
+MAX_WORDS = 100
 MIN_WORD_LENGTH = 3
 RESULT_LIMIT = 3
 TRIGRAM_WEIGHT = 0.8
 FTS_WEIGHT = 0.2
 FTS_SCALE = 2.0
+STRONG_SIMILARITY = 0.7
+MIN_STRONG_WORDS = 3
 
 STOP_WORDS = frozenset(
     """
@@ -28,7 +30,7 @@ STOP_WORDS = frozenset(
     """.split()
 )
 
-APOSTROPHE_PATTERN = re.compile("[’ʼ'`]")
+APOSTROPHE_PATTERN = re.compile(f"[{re.escape(APOSTROPHES)}]")
 WORD_PATTERN = re.compile(r"[^\W_]+")
 
 
@@ -50,6 +52,8 @@ class KbService:
         self._min_score = min_score
 
     async def get_article(self, slug: str) -> KbArticle:
+        if len(slug) > MAX_SLUG_LENGTH or not SLUG_PATTERN.fullmatch(slug):
+            raise KbArticleNotFoundError()
         article = await self._repository.get_by_slug(slug)
         if article is None:
             raise KbArticleNotFoundError()
@@ -59,19 +63,23 @@ class KbService:
         words = extract_words(query)
         if not words:
             return []
-        scored = await self._repository.score_articles(words)
-        matches = [
-            KbMatch(
-                slug=item.slug,
-                title=item.title,
-                score=TRIGRAM_WEIGHT * item.trigram_score
-                + FTS_WEIGHT * min(1.0, item.fts_score * FTS_SCALE),
-            )
+        scored = await self._repository.score_articles(words, STRONG_SIMILARITY)
+        # A long ticket dilutes the mean word similarity, so an article also
+        # counts when several of the words match it strongly.
+        relevant = [
+            KbMatch(slug=item.slug, title=item.title, score=self._score(item))
             for item in scored
+            if self._score(item) >= self._min_score
+            or item.strong_words >= MIN_STRONG_WORDS
         ]
-        relevant = [match for match in matches if match.score >= self._min_score]
         relevant.sort(key=lambda match: match.score, reverse=True)
         return relevant[:RESULT_LIMIT]
+
+    @staticmethod
+    def _score(item: ArticleScore) -> float:
+        return TRIGRAM_WEIGHT * item.trigram_score + FTS_WEIGHT * min(
+            1.0, item.fts_score * FTS_SCALE
+        )
 
 
 def get_kb_service(
