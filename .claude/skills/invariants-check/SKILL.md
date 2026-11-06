@@ -24,7 +24,11 @@ Structure and safety checks that apply to every diff:
 - SQL outside a repository, or a router containing logic.
 - A database transaction held open across a provider or helpdesk call.
 - `reply_url` used without the host check (private, loopback and link-local addresses refused unless allow-listed); redirects followed.
-- Secrets, API keys or full customer messages in log lines.
+- Secrets, API keys, provider response bodies or full customer messages in log lines or error responses.
+- Untrusted text (customer message, draft, KB article, error text) put into the page with `innerHTML` or `insertAdjacentHTML`; it must go in with `textContent` or be escaped, and any rendered KB markdown must be sanitized.
+- An operator route (`/api/tickets*`) without the Basic Auth dependency, or a public route that is not listed in SPEC §4.
+- A state-changing operator route that accepts a request without the custom header required by SPEC §10: browsers resend cached Basic credentials on cross-site form posts, so without it any web page could approve a reply.
 - A new dependency without a `docs/DECISIONS.md` entry.
-- Behavior change without a test, or a test that cannot fail (no assertion on the invariant itself).
+- Behavior change without a test, or a test that cannot fail. For every new test name the bug that would make it fail; a test that passes on a stub or on an empty implementation proves nothing.
+- A concurrency test that passes once but was not run repeatedly; it may be flaky or may not exercise the race at all.
 - A docs file that no longer matches the code (SPEC, DECISIONS, README, `.env.example`).

@@ -151,6 +151,8 @@ Transient generation failures return a row to `received`, and definite send fail
 ## 10. Operator UI
 
 - Basic Auth on the operator API (`OPERATOR_USER`, `OPERATOR_PASSWORD`); the browser shows its own login prompt on the first `401`. The backend refuses to start with default credentials when `APP_ENV=production`.
+- State-changing operator requests (approve, reject, mark-delivered, resend) must carry the header `X-Requested-By: operator-ui` and a JSON content type; the backend rejects them otherwise. Browsers attach cached Basic Auth credentials to cross-site form posts, so without this any web page could approve a reply (CSRF). The custom header forces a CORS preflight, which the backend does not allow.
+- Customer messages, drafts and KB text are untrusted: the pages insert them with `textContent`, never as HTML.
 - Static pages in `frontend/` call the JSON API with `fetch`. No framework and no build step.
 - `index.html` ticket list with status filter and per-status counts; it re-fetches every 5 s.
 - `ticket.html?id=...` customer message, draft, sources, low-confidence badge, last error, **Approve** and **Reject** (only from `draft_ready`). For `send_unknown`: **Mark delivered** and **Resend**, with a warning that the reply may already have reached the customer.
