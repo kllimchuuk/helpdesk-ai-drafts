@@ -8,10 +8,10 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.database import get_db, translate_unavailable
-from knowledge_base.constants import APOSTROPHES
 from knowledge_base.models import KbArticle
 from knowledge_base.schemas import ArticleScore, ParsedArticle
 
+APOSTROPHES = "’ʼ'`"
 SCORES = TypeAdapter(list[ArticleScore])
 ARTICLES = TypeAdapter(list[ParsedArticle])
 
