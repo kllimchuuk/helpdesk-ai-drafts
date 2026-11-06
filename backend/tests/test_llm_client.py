@@ -5,7 +5,7 @@ import httpx2
 import pytest
 from anthropic import AsyncAnthropic
 
-from llm.anthropic_client import AnthropicProvider
+from llm.anthropic_client import MAX_RETRY_AFTER_S, AnthropicProvider
 from llm.exceptions import (
     LLMError,
     LLMInvalidOutputError,
@@ -222,7 +222,7 @@ async def test_errors_do_not_carry_the_provider_response_as_their_cause() -> Non
         await provider(recorder).complete(REQUEST)
 
     assert caught.value.__cause__ is None
-    assert "secret text" not in repr(caught.value)
+    assert caught.value.__context__ is None
 
 
 async def test_a_reply_that_breaks_the_schema_does_not_leak_into_the_error() -> None:
@@ -232,7 +232,7 @@ async def test_a_reply_that_breaks_the_schema_does_not_leak_into_the_error() -> 
         await provider(answer(200, body)).complete(REQUEST)
 
     assert caught.value.__cause__ is None
-    assert "customer secret" not in repr(caught.value)
+    assert caught.value.__context__ is None
 
 
 @pytest.mark.parametrize(
@@ -249,3 +249,35 @@ async def test_a_malformed_success_response_is_an_invalid_output(
 ) -> None:
     with pytest.raises(LLMError):
         await provider(Recorder(lambda request: response)).complete(REQUEST)
+
+
+async def test_a_huge_retry_after_is_capped() -> None:
+    recorder = answer(
+        429,
+        {"type": "error", "error": {"type": "rate_limit_error", "message": "x"}},
+        headers={"retry-after": "1e300"},
+    )
+
+    with pytest.raises(LLMRateLimitedError) as caught:
+        await provider(recorder).complete(REQUEST)
+
+    assert caught.value.retry_after == MAX_RETRY_AFTER_S
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        [{"type": "text"}],
+        ["not an object"],
+        [None],
+        [{"type": "text", "text": None}],
+        [{"type": "text", "text": 5}],
+    ],
+)
+async def test_a_malformed_content_block_is_an_invalid_output(content: list) -> None:
+    body = {**message("x"), "content": content}
+
+    with pytest.raises(LLMInvalidOutputError) as caught:
+        await provider(answer(200, body)).complete(REQUEST)
+
+    assert caught.value.__context__ is None

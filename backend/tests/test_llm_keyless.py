@@ -205,3 +205,16 @@ async def test_the_delay_is_drawn_between_the_configured_bounds() -> None:
     await client.complete(LLMRequest(system="s", user="u"))
 
     assert drawn == [(5, 30)]
+
+
+async def test_cancelling_the_caller_still_propagates() -> None:
+    client = KeylessClient(
+        HangingProbe(), delay_min=20, delay_max=20, sleep=FakeTime().sleep
+    )
+    task = asyncio.ensure_future(client.complete(REQUEST))
+    await asyncio.sleep(0.05)
+
+    task.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await task

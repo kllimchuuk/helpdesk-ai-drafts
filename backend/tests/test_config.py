@@ -48,6 +48,7 @@ def test_the_llm_settings_have_safe_defaults() -> None:
         {"LLM_DAILY_CALL_CAP": -1},
         {"KEYLESS_DELAY_MIN_S": 31},
         {"KEYLESS_DELAY_MIN_S": -1},
+        {"KEYLESS_DELAY_MIN_S": 0.5},
         {"LLM_REQUEST_TIMEOUT_S": 0},
     ],
 )

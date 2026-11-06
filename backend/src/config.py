@@ -13,7 +13,7 @@ class Settings(BaseSettings):
     LLM_RATE_LIMIT_PER_MINUTE: int = Field(default=55, ge=1, le=60)
     LLM_DAILY_CALL_CAP: int = Field(default=500, ge=0)
     LLM_REQUEST_TIMEOUT_S: float = Field(default=45.0, gt=0)
-    KEYLESS_DELAY_MIN_S: float = Field(default=5.0, ge=0)
+    KEYLESS_DELAY_MIN_S: float = Field(default=5.0, ge=1)
     KEYLESS_DELAY_MAX_S: float = Field(default=30.0, ge=0)
     DATABASE_URL: str = "postgresql+asyncpg://postgres:postgres@db:5432/helpdesk"
     TEST_DATABASE_URL: str = (

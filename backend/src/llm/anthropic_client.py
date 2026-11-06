@@ -17,6 +17,7 @@ from llm.exceptions import (
 from llm.schemas import DraftOutput, LLMRequest, LLMResult
 
 MAX_TOKENS = 4096
+MAX_RETRY_AFTER_S = 3600.0
 OUTPUT_CONFIG = {
     "effort": "low",
     "format": {"type": "json_schema", "schema": DraftOutput.model_json_schema()},
@@ -38,12 +39,16 @@ class AnthropicProvider(LLMClient):
                 output_config=OUTPUT_CONFIG,
             )
         except anthropic.APIStatusError as error:
-            raise classify_status(error) from None
+            failure = classify_status(error)
         except anthropic.APIConnectionError as error:
-            raise LLMTransientError(type(error).__name__) from None
+            failure = LLMTransientError(type(error).__name__)
         except anthropic.APIError as error:
-            raise LLMInvalidOutputError(type(error).__name__) from None
-        return to_result(response)
+            failure = LLMInvalidOutputError(type(error).__name__)
+        else:
+            return to_result(response)
+        # Raised outside the except blocks so no exception context is attached:
+        # the provider's response body and the model's reply can hold customer text.
+        raise failure
 
 
 def classify_status(error: anthropic.APIStatusError) -> LLMError:
@@ -60,7 +65,9 @@ def parse_retry_after(headers: object) -> float | None:
         seconds = float(headers.get("retry-after"))
     except (TypeError, ValueError):
         return None
-    return seconds if math.isfinite(seconds) and seconds >= 0 else None
+    if not math.isfinite(seconds) or seconds < 0:
+        return None
+    return min(seconds, MAX_RETRY_AFTER_S)
 
 
 def to_result(response: object) -> LLMResult:
@@ -70,13 +77,19 @@ def to_result(response: object) -> LLMResult:
         raise LLMRefusalError()
     if response.stop_reason == "max_tokens":
         raise LLMInvalidOutputError("the answer was cut off")
-    text = "".join(
-        block.text for block in response.content or [] if block.type == "text"
-    )
-    try:
-        output = DraftOutput.model_validate_json(text)
-    except ValidationError:
-        raise LLMInvalidOutputError("the answer does not match the schema") from None
+    output = parse_output(response)
+    if output is None:
+        raise LLMInvalidOutputError("the answer does not match the schema")
     return LLMResult(
         reply=output.reply, cited_slugs=output.cited_slugs, is_static=False
     )
+
+
+def parse_output(response: Message) -> DraftOutput | None:
+    try:
+        text = "".join(
+            block.text for block in response.content or [] if block.type == "text"
+        )
+        return DraftOutput.model_validate_json(text)
+    except (AttributeError, TypeError, ValidationError):
+        return None
