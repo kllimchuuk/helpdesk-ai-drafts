@@ -1,0 +1,1 @@
+APOSTROPHES = "’ʼ'`"
