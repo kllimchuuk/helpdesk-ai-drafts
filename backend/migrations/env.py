@@ -9,6 +9,8 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 from config import settings
 from core.registry import metadata
 
+MIGRATION_LOCK_ID = 7_364_892_001
+
 config = context.config
 
 if config.config_file_name is not None:
@@ -41,6 +43,8 @@ def do_run_migrations(connection: Connection) -> None:
         compare_server_default=True,
     )
     with context.begin_transaction():
+        # Containers that start together would otherwise race to create the tables.
+        context.execute(f"SELECT pg_advisory_xact_lock({MIGRATION_LOCK_ID})")
         context.run_migrations()
 
 
