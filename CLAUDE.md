@@ -34,7 +34,7 @@ Available as the slices land (SPEC §13):
 - Spec first. Read the slice in SPEC §13 and its sections before writing code. Write the failing test for the acceptance criterion (SPEC §12), then the code. Use the `spec-slice` skill.
 - Do not bypass the SPEC silently. If it is wrong or silent, stop and report it as "Decision needed" with a recommendation; the owner decides, and the answer goes into `docs/DECISIONS.md`.
 - Update the docs in the same commit as the change that makes them true.
-- Review before merge: run the `reviewer` subagent (read-only, fresh context) on the branch. Fix findings in separate `fix: address review ...` commits, each with a test that failed first.
+- Review before merge: run the `reviewer` subagent (read-only, fresh context) on the branch, and again after the fixes to confirm they hold. Fix findings in separate `fix: address review ...` commits, each with a test that failed first.
 - Reports use this shape (`report` skill): Done / Numbers (measured only, with the command) / Deviations from SPEC / Decision needed / Next.
 - Never invent numbers. A figure needs a command or a file it came from.
 

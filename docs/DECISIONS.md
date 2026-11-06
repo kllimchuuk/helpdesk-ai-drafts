@@ -101,3 +101,14 @@ Basis: owner's question during review of slice S0.
 1. **`backend/` keeps a `src/` directory; `frontend/` has none.**
    Why: the backend is Python packages that import each other, so `src/` separates importable code from `tests/`, `migrations/`, `content/` and the packaging files, as in the owner's `cadence`. The frontend is a handful of static files with no imports, tests or build step, so a `src/` there would only add a level.
    Changed: nothing; recorded so the asymmetry is explained.
+
+## 2026-11-06 - Reviewer subagent hardening and operator-surface safety
+
+Basis: owner asked to check the final-review agent against best practice (official subagent documentation and Anthropic's Code Review design). **Recommendation**, in effect once the owner merges it.
+
+1. **The reviewer's shell is restricted by a hook, not only by a prompt.** The agent's `tools` line listed unrestricted `Bash`, so "read-only" depended on the prompt; a shell can also read `.env` around the settings deny rule. A `PreToolUse` hook (`.claude/hooks/reviewer_readonly.py`, tested in `backend/tests/test_reviewer_readonly_hook.py`) now allows only an explicit list of read-only commands and blocks chaining, redirects and write flags.
+   Why: tool allowlists and hooks enforce, prompts only request. The hook is defense in depth, not a sandbox: `pytest` still runs repository code.
+2. **The reviewer verifies each finding before reporting it, reads callers outside the diff, includes uncommitted files, judges whether tests can fail, and reports the status of earlier findings.** Anthropic's own Code Review verifies candidate bugs before posting them, which is how it keeps false reports rare.
+3. **The checklist is preloaded with `skills: [invariants-check]`**, and the agent has `effort: high` and `maxTurns: 30`.
+4. **Untrusted text is rendered with `textContent`, and operator POSTs require a custom header (CSRF).** The review found these two gaps in the design itself, not only in the agent: customer text reaches the operator's browser, and Basic Auth credentials are resent cross-site by browsers.
+   Changed: `.claude/agents/reviewer.md`, `.claude/skills/invariants-check/SKILL.md`, SPEC §10.
