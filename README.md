@@ -22,7 +22,7 @@ docker compose up --build
 | Placeholder page | http://localhost:8080 |
 | PostgreSQL | `127.0.0.1:5434` (change with `DB_HOST_PORT`) |
 
-Try the webhook (the second call is reported as a duplicate):
+Try the webhook. The second identical call is reported as a duplicate:
 
 ```bash
 curl -s -X POST http://localhost:8080/webhooks/helpdesk -H 'content-type: application/json' -d '{
@@ -32,6 +32,11 @@ curl -s -X POST http://localhost:8080/webhooks/helpdesk -H 'content-type: applic
   "message": "Не можу експортувати звіт у PDF",
   "reply_url": "https://helpdesk.example.com/tickets/T-1042/replies"
 }'
+```
+
+Send the same body again and the answer changes from `{"status":"accepted"}` to `{"status":"duplicate"}`. Then look at the counts:
+
+```bash
 curl -s http://localhost:8080/api/stats
 ```
 
@@ -45,12 +50,13 @@ Requirements: [uv](https://docs.astral.sh/uv/).
 docker compose up -d db
 cd backend
 uv sync
+export DATABASE_URL=postgresql+asyncpg://postgres:postgres@127.0.0.1:5434/helpdesk
 uv run alembic upgrade head
 uv run uvicorn main:app --reload --app-dir src
 uv run pytest
 uv run ruff check . && uv run ruff format --check .
 ```
 
-The tests need the compose `db` service; they create and drop their own `helpdesk_test` database and never touch `helpdesk`. When running the backend on your machine set `DATABASE_URL` to the published port (see `.env.example`).
+The tests need the compose `db` service; they create and drop their own `helpdesk_test` database and never touch `helpdesk`. `DATABASE_URL` above points the backend at the published port of the compose database (inside compose the host is `db`).
 
 Environment variables are listed in [`.env.example`](.env.example); all of them are optional.

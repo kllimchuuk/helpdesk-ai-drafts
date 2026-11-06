@@ -56,7 +56,7 @@ See `docs/DECISIONS.md` for alternatives and why they lost.
 ```
 
 - `200 {"status": "accepted"}` for a new event, `200 {"status": "duplicate"}` for a known `event_id`.
-- Fields are trimmed and validated: `event_id` and `ticket_id` 1-255 characters, `customer_email` of the form `x@y` up to 320 characters, `message` 1-20 000 characters, `reply_url` a valid http or https URL. Anything else is `422`.
+- Fields are trimmed and validated: `event_id` and `ticket_id` 1-255 characters, `customer_email` of the form `x@y` up to 320 characters, `message` 1-20 000 characters, `reply_url` a valid http or https URL. NUL characters are rejected because PostgreSQL text cannot store them. Anything else is `422`.
 - `422` for an invalid body. `503` if the database is unavailable (the helpdesk then retries).
 - The handler validates, inserts, returns. It never calls the LLM, the KB search, or `reply_url`.
 
@@ -237,7 +237,7 @@ Rules, taken from `cadence`:
 3. Domain errors subclass `AppException(code, message, payload)` and are rendered as `{code, message, payload}`.
 4. All SQL lives in repositories, including `SKIP LOCKED`, `ON CONFLICT`, advisory locks and atomic status transitions.
 5. No database transaction stays open during a provider call or a helpdesk call: claim in one short transaction, work outside it, save the result in another.
-6. Tests run against a real Postgres. The test database name must end with `_test` and differ from the development one; each test runs in a rolled-back transaction. Fakes (`FakeLLMClient`, failing and flaky variants) live in `tests/fakes.py`.
+6. Tests run against a real Postgres. The test database name must end with `_test` and differ from the development one; each test starts from empty tables (`TRUNCATE`), because the concurrency tests need real commits across connections. Fakes (`FakeLLMClient`, failing and flaky variants) live in `tests/fakes.py`.
 7. Code has no comments except the few that explain a non-obvious reason, such as why a lock or a lease exists.
 
 Branches. One branch per slice, named by commit type (`feat/webhook-idempotency`, `docs/spec-and-agent-config`, `fix/review-findings`), merged into `main` through a pull request with a merge commit, never squash, so the history stays as written. `main` stays green and the VPS pulls only `main`. The pull request description is the report from the `report` skill.
