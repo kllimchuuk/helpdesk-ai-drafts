@@ -262,7 +262,7 @@ Slices. Each is a commit or a few, with the module and its tests together. Deplo
 
 ## 14. Configuration and open questions
 
-Environment variables (all in `.env.example`, none required locally): `DATABASE_URL`, `ANTHROPIC_API_KEY` (empty enables keyless mode), `LLM_MODEL`, `KB_CONTENT_DIR`, `KB_MIN_SCORE`, `LLM_RATE_LIMIT_PER_MINUTE`, `LLM_DAILY_CALL_CAP`, `LLM_CONCURRENCY`, `SEND_CONCURRENCY`, `SEND_RETRY_AMBIGUOUS`, `KEYLESS_DELAY_MIN_S`, `KEYLESS_DELAY_MAX_S`, `REPLY_URL_ALLOWED_HOSTS`, `PUBLIC_BASE_URL`, `OPERATOR_USER`, `OPERATOR_PASSWORD`, `APP_ENV`.
+Environment variables (all in `.env.example`, none required locally): `DATABASE_URL`, `ANTHROPIC_API_KEY` (empty enables keyless mode), `LLM_MODEL`, `LLM_REQUEST_TIMEOUT_S`, `KB_CONTENT_DIR`, `KB_MIN_SCORE`, `LLM_RATE_LIMIT_PER_MINUTE`, `LLM_DAILY_CALL_CAP`, `LLM_CONCURRENCY`, `SEND_CONCURRENCY`, `SEND_RETRY_AMBIGUOUS`, `KEYLESS_DELAY_MIN_S`, `KEYLESS_DELAY_MAX_S`, `REPLY_URL_ALLOWED_HOSTS`, `PUBLIC_BASE_URL`, `OPERATOR_USER`, `OPERATOR_PASSWORD`, `APP_ENV`.
 
 Answered on 2026-11-06 (see `docs/DECISIONS.md`): ambiguous send outcomes are parked as `send_unknown` (§9); package manager is `uv`; the repository stays private for now; demo credentials are not stored in the repo (local defaults `operator/operator`, server credentials sent to the reviewer separately), and `LLM_DAILY_CALL_CAP` bounds the cost of the public webhook.
 
