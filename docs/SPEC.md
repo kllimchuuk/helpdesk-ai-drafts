@@ -108,7 +108,7 @@ These are what the service must keep true. Each has an acceptance test (§12).
 | `gen_attempts`, `send_attempts`, `next_attempt_at`, `locked_until`, `last_error` | queue bookkeeping |
 | `created_at`, `updated_at`, `reviewed_at`, `sent_at` | |
 
-Other tables: `llm_calls(called_at)` for the rate limiter, `kb_articles(slug PK, title, body, tsv)` for the KB.
+Other tables: `llm_calls(id, called_at, kind)` for the rate limiter and the daily cap (`kind` is `provider` or `keyless`), `kb_articles(slug PK, title, body, tsv)` for the KB.
 
 ```
 received -> generating -> draft_ready -> approved -> sending -> sent
@@ -212,8 +212,8 @@ backend/
                  router (/api/tickets, /api/stats)
     knowledge_base/  models, repository, service (search), loader, schemas, exceptions,
                      router (/api/kb/{slug})
-    llm/         client (interface), anthropic_client, keyless, factory,
-                 call log and limiter (models, repository, service, daily cap), schemas, exceptions
+    llm/         client (interface), anthropic_client, keyless, guarded_client, factory,
+                 call log and limiter (models, route, repository, service, limiter), schemas, exceptions
     drafting/    service, prompts, schemas
     delivery/    helpdesk_client, outcome (classification), ssrf, service, exceptions
     workers/     runner, generation_loop, send_loop, dependencies, __main__
