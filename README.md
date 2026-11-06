@@ -6,7 +6,7 @@ This is a test task, built with AI coding agents. Read how the work is organised
 
 ## Status
 
-Work proceeds in slices (SPEC §13). Done so far: project skeleton with `/health`, Docker Compose and a placeholder page; the `ticket_events` schema with Alembic migrations; the idempotent webhook `POST /webhooks/helpdesk`; and `GET /api/stats`. The KB search, LLM pipeline, workers, operator UI, mock helpdesk and simulator are still to come, so this file will grow with them.
+Work proceeds in slices (SPEC §13). Done so far: project skeleton with `/health`, Docker Compose and a placeholder page; the `ticket_events` schema with Alembic migrations; the idempotent webhook `POST /webhooks/helpdesk`; `GET /api/stats`; and the knowledge base (8 Ukrainian articles, search by text, `GET /api/kb/{slug}`). The LLM pipeline, workers, operator UI, mock helpdesk and simulator are still to come, so this file will grow with them.
 
 ## Run
 
@@ -44,6 +44,20 @@ curl -s http://localhost:8080/api/stats
 ```
 
 Stop with `docker compose down` (add `-v` to delete the database volume).
+
+## Knowledge base
+
+The articles are Markdown files in `backend/content/kb/` about a fictional product (Vistara), written with Claude as the task asks. Each file starts with front matter and its name is the slug:
+
+```
+---
+slug: reset-password
+title: Відновлення пароля
+---
+Article text...
+```
+
+The backend container loads the files into PostgreSQL every time it starts, so to add or change an article edit the file and run `docker compose up -d --build backend`. Read one with `curl -s http://localhost:8080/api/kb/reset-password`. Search by ticket text is done inside the service (PostgreSQL trigram similarity plus full-text rank) and will be used when drafts are generated; see `docs/DECISIONS.md` for how it was tuned and how well it works.
 
 ## Develop
 
