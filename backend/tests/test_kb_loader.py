@@ -172,3 +172,15 @@ def test_a_slug_that_is_too_long_is_rejected() -> None:
 def test_a_title_that_is_too_long_is_rejected() -> None:
     with pytest.raises(ArticleFileError):
         parse_article(f"---\nslug: a\ntitle: {'T' * 256}\n---\nBody", "a.md")
+
+
+def test_a_nul_character_in_an_article_is_rejected() -> None:
+    with pytest.raises(ArticleFileError):
+        parse_article("---\nslug: a\ntitle: T\n---\nBody\x00text", "a.md")
+
+
+def test_a_file_that_is_not_utf8_is_rejected(tmp_path: Path) -> None:
+    (tmp_path / "a.md").write_bytes(b"---\nslug: a\ntitle: T\n---\n\xff\xfe broken")
+
+    with pytest.raises(ArticleFileError):
+        read_directory(tmp_path)

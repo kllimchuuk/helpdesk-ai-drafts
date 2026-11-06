@@ -16,6 +16,8 @@ FRONT_MATTER_KEYS = ("slug", "title")
 
 
 def parse_article(text: str, source: str) -> ParsedArticle:
+    if "\x00" in text:
+        raise ArticleFileError(f"{source}: NUL characters are not allowed")
     lines = text.splitlines()
     if not lines or lines[0] != "---":
         raise ArticleFileError(f"{source}: the file must start with front matter")
@@ -58,7 +60,13 @@ def read_directory(directory: Path) -> list[ParsedArticle]:
         raise ArticleFileError(f"{directory}: no articles found")
     articles = []
     for path in paths:
-        article = parse_article(path.read_text(encoding="utf-8"), path.name)
+        try:
+            text = path.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            raise ArticleFileError(
+                f"{path.name}: the file is not valid UTF-8"
+            ) from None
+        article = parse_article(text, path.name)
         if path.stem != article.slug:
             raise ArticleFileError(
                 f"{path.name}: the file name must be {article.slug}.md"

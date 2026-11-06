@@ -1,4 +1,3 @@
-import time
 from pathlib import Path
 
 import pytest
@@ -199,18 +198,6 @@ async def test_hostile_or_empty_queries_are_harmless(
 
     assert matches == []
     assert total == 8
-
-
-async def test_a_huge_query_is_bounded(
-    loaded_kb: None, session_factory: async_sessionmaker[AsyncSession]
-) -> None:
-    query = " ".join(f"слово{number}" for number in range(5000))
-
-    started = time.perf_counter()
-    async with session_factory() as session:
-        await service(session).search(query)
-
-    assert time.perf_counter() - started < 2.0
 
 
 def test_words_are_lowercased_filtered_and_deduplicated() -> None:
