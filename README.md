@@ -22,19 +22,22 @@ docker compose up --build
 | Placeholder page | http://localhost:8080 |
 | PostgreSQL | `127.0.0.1:5434` (change with `DB_HOST_PORT`) |
 
-Try the webhook. The second identical call is reported as a duplicate:
+Try the webhook. The loop sends the same event twice, and the second answer is `duplicate` (if you run it again on the same database volume both answers are `duplicate`):
 
 ```bash
-curl -s -X POST http://localhost:8080/webhooks/helpdesk -H 'content-type: application/json' -d '{
-  "event_id": "evt_8f2a",
-  "ticket_id": "T-1042",
-  "customer_email": "user@example.com",
-  "message": "Не можу експортувати звіт у PDF",
-  "reply_url": "https://helpdesk.example.com/tickets/T-1042/replies"
-}'
+for attempt in 1 2; do
+  curl -s -X POST http://localhost:8080/webhooks/helpdesk -H 'content-type: application/json' -d '{
+    "event_id": "evt_8f2a",
+    "ticket_id": "T-1042",
+    "customer_email": "user@example.com",
+    "message": "Не можу експортувати звіт у PDF",
+    "reply_url": "https://helpdesk.example.com/tickets/T-1042/replies"
+  }'
+  echo
+done
 ```
 
-Send the same body again and the answer changes from `{"status":"accepted"}` to `{"status":"duplicate"}`. Then look at the counts:
+A new event is answered with `{"status":"accepted"}`, a repeated one with `{"status":"duplicate"}`. Then look at the counts:
 
 ```bash
 curl -s http://localhost:8080/api/stats

@@ -248,7 +248,7 @@ Slices. Each is a commit or a few, with the module and its tests together. Deplo
 |---|---|---|
 | S-1 | `CLAUDE.md`, `.claude/`, SPEC, DECISIONS | reviewed by the user |
 | S0 | project skeleton, settings, `/health`, Dockerfile, compose (db, backend, frontend placeholder), `ruff` + `pytest` | `docker compose up` serves `/health`; deployed to the VPS |
-| S1 | schema, Alembic, webhook, `/api/stats` | I1, I2, I3 tests green |
+| S1 | schema, Alembic, webhook, `/api/stats` | I2 fully, and the durable-write parts of I1 and I3, green; the full I1 run (simulator, S7) and I3 run (worker, S4) come later, see DECISIONS 2026-11-06 S1 item 12 |
 | S2 | KB seed (8 Ukrainian articles), search, `/api/kb/{slug}` | relevant article found for 5 sample tickets |
 | S3 | LLM client, limiter, daily cap, keyless mode | I4, I8, I9 tests green |
 | S4 | generation worker with leases and retries | I5 test green |
