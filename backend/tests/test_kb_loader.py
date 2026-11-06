@@ -1,0 +1,136 @@
+import asyncio
+from pathlib import Path
+
+import pytest
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+from kb.exceptions import ArticleFileError
+from kb.loader import parse_article, read_directory, sync_articles
+from kb.models import KbArticle
+from tests.helpers import KB_DIRECTORY
+
+VALID = (
+    "---\nslug: reset-password\ntitle: Відновлення пароля\n---\n\n"
+    "Кроки.\n\nДруга частина.\n"
+)
+
+
+def write(directory: Path, slug: str, text: str) -> None:
+    (directory / f"{slug}.md").write_text(text)
+
+
+async def stored(session_factory: async_sessionmaker[AsyncSession]) -> dict[str, str]:
+    async with session_factory() as session:
+        rows = await session.execute(select(KbArticle.slug, KbArticle.title))
+        return dict(rows.all())
+
+
+def test_a_valid_article_is_parsed() -> None:
+    article = parse_article(VALID, "reset-password.md")
+
+    assert article.slug == "reset-password"
+    assert article.title == "Відновлення пароля"
+    assert article.body == "Кроки.\n\nДруга частина."
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "no front matter at all",
+        "---\ntitle: Only a title\n---\nBody",
+        "---\nslug: only-a-slug\n---\nBody",
+        "---\nslug: a\ntitle: T\n",
+        "---\nslug: a\ntitle: T\n---\n   \n",
+        "---\nslug: Not Valid\ntitle: T\n---\nBody",
+        "---\nslug: UPPER\ntitle: T\n---\nBody",
+        "---\nslug: a\ntitle: T\nextra: nope\n---\nBody",
+        "---\nslug: a\nslug: b\ntitle: T\n---\nBody",
+        "---\nslug: a\ntitle:\n---\nBody",
+    ],
+)
+def test_a_broken_article_is_rejected(text: str) -> None:
+    with pytest.raises(ArticleFileError):
+        parse_article(text, "a.md")
+
+
+def test_the_file_name_must_match_the_slug(tmp_path: Path) -> None:
+    write(tmp_path, "other-name", VALID)
+
+    with pytest.raises(ArticleFileError):
+        read_directory(tmp_path)
+
+
+def test_the_real_content_directory_is_valid_and_short() -> None:
+    articles = read_directory(KB_DIRECTORY)
+
+    assert 5 <= len(articles) <= 10
+    assert len({article.slug for article in articles}) == len(articles)
+    for article in articles:
+        assert 60 <= len(article.body.split()) <= 300, article.slug
+
+
+async def test_sync_stores_the_articles(
+    session_factory: async_sessionmaker[AsyncSession], tmp_path: Path
+) -> None:
+    write(tmp_path, "reset-password", VALID)
+
+    count = await sync_articles(session_factory, tmp_path)
+
+    assert count == 1
+    assert await stored(session_factory) == {"reset-password": "Відновлення пароля"}
+
+
+async def test_sync_twice_changes_nothing_and_picks_up_edits(
+    session_factory: async_sessionmaker[AsyncSession], tmp_path: Path
+) -> None:
+    write(tmp_path, "reset-password", VALID)
+    await sync_articles(session_factory, tmp_path)
+
+    await sync_articles(session_factory, tmp_path)
+    write(
+        tmp_path,
+        "reset-password",
+        VALID.replace("Відновлення пароля", "Новий заголовок"),
+    )
+    await sync_articles(session_factory, tmp_path)
+
+    assert await stored(session_factory) == {"reset-password": "Новий заголовок"}
+
+
+async def test_sync_removes_articles_whose_file_is_gone(
+    session_factory: async_sessionmaker[AsyncSession], tmp_path: Path
+) -> None:
+    write(tmp_path, "reset-password", VALID)
+    write(tmp_path, "other", VALID.replace("reset-password", "other"))
+    await sync_articles(session_factory, tmp_path)
+
+    (tmp_path / "other.md").unlink()
+    await sync_articles(session_factory, tmp_path)
+
+    assert set(await stored(session_factory)) == {"reset-password"}
+
+
+async def test_an_invalid_file_leaves_the_stored_articles_untouched(
+    session_factory: async_sessionmaker[AsyncSession], tmp_path: Path
+) -> None:
+    write(tmp_path, "reset-password", VALID)
+    await sync_articles(session_factory, tmp_path)
+    write(tmp_path, "broken", "no front matter")
+
+    with pytest.raises(ArticleFileError):
+        await sync_articles(session_factory, tmp_path)
+
+    assert set(await stored(session_factory)) == {"reset-password"}
+
+
+async def test_containers_syncing_at_the_same_time_do_not_clash(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    await asyncio.gather(
+        *(sync_articles(session_factory, KB_DIRECTORY) for _ in range(6))
+    )
+
+    async with session_factory() as session:
+        total = await session.scalar(select(func.count()).select_from(KbArticle))
+    assert total == len(read_directory(KB_DIRECTORY))
