@@ -83,7 +83,7 @@ def read_directory(directory: Path) -> list[ParsedArticle]:
 async def sync_articles(
     session_factory: async_sessionmaker[AsyncSession], directory: Path
 ) -> int:
-    articles = read_directory(directory)
+    articles = sorted(read_directory(directory), key=lambda article: article.slug)
     async with session_factory() as session:
         await KbRepositoryImpl(session).replace_all(articles)
     return len(articles)

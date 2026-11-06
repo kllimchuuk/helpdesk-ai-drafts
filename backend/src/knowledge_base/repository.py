@@ -2,6 +2,7 @@ from abc import ABC, abstractmethod
 from typing import Annotated
 
 from fastapi import Depends
+from pydantic import TypeAdapter
 from sqlalchemy import ARRAY, Text, bindparam, delete, text
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -11,6 +12,8 @@ from knowledge_base.models import KbArticle
 from knowledge_base.schemas import ArticleScore, ParsedArticle
 
 APOSTROPHES = "’ʼ'`"
+SCORES = TypeAdapter(list[ArticleScore])
+ARTICLES = TypeAdapter(list[ParsedArticle])
 
 SCORE_QUERY = text(
     """
@@ -51,6 +54,7 @@ class KbRepository(ABC):
 
     @abstractmethod
     async def replace_all(self, articles: list[ParsedArticle]) -> None:
+        """Store exactly these articles; the caller passes them ordered by slug."""
         raise NotImplementedError()
 
 
@@ -75,41 +79,24 @@ class KbRepositoryImpl(KbRepository):
                 "strong": strong_similarity,
             },
         )
-        return [
-            ArticleScore(
-                slug=row.slug,
-                title=row.title,
-                trigram_score=float(row.trigram_score),
-                fts_score=float(row.fts_score),
-                strong_words=int(row.strong_words),
-            )
-            for row in rows
-        ]
+        return SCORES.validate_python(rows.all(), from_attributes=True)
 
     @translate_unavailable
     async def replace_all(self, articles: list[ParsedArticle]) -> None:
-        ordered = sorted(articles, key=lambda article: article.slug)
-        statement = insert(KbArticle).values(
-            [
-                {"slug": item.slug, "title": item.title, "body": item.body}
-                for item in ordered
-            ]
-        )
-        # One statement in slug order: containers syncing together take row locks
-        # in the same order and cannot deadlock.
-        await self._session.execute(
+        statement = insert(KbArticle).values(ARTICLES.dump_python(articles))
+        # One statement in the caller's slug order: containers syncing together
+        # take row locks in the same order and cannot deadlock.
+        stored = await self._session.execute(
             statement.on_conflict_do_update(
                 index_elements=[KbArticle.slug],
                 set_={
                     "title": statement.excluded.title,
                     "body": statement.excluded.body,
                 },
-            )
+            ).returning(KbArticle.slug)
         )
         await self._session.execute(
-            delete(KbArticle).where(
-                KbArticle.slug.not_in([item.slug for item in ordered])
-            )
+            delete(KbArticle).where(KbArticle.slug.not_in(stored.scalars().all()))
         )
         await self._session.commit()
 

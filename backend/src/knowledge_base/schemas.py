@@ -15,8 +15,9 @@ class ParsedArticle:
     body: str
 
 
-@dataclass(frozen=True)
-class ArticleScore:
+class ArticleScore(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
     slug: str
     title: str
     trigram_score: float
