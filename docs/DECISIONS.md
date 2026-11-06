@@ -38,6 +38,9 @@ Basis: owner's confirmation.
    Changed: `CLAUDE.md` working rules.
 3. **Agent skills are project-specific.** The planned set is `spec-slice`, `invariants-check` and `report`, plus a read-only `reviewer` subagent. Generic skills (SOLID, DRY and similar) are not copied in: the model already knows them, their broad triggers fire on every task, and they carry nothing about this service.
    Changed: SPEC §13.
+4. **One branch per slice, pull request into `main`, merged with a merge commit.**
+   Why: the task wants the history as is, without squash, and a branch per slice shows the work step by step, as in the owner's `cadence` project. The pull request description doubles as the stage report. Squash and rebase-merge are not used; force push is forbidden.
+   Changed: SPEC §13, `CLAUDE.md`.
 
 ## 2026-11-06 - Failure semantics
 

@@ -237,6 +237,8 @@ Rules, taken from `cadence`:
 6. Tests run against a real Postgres. The test database name must end with `_test` and differ from the development one; each test runs in a rolled-back transaction. Fakes (`FakeLLMClient`, failing and flaky variants) live in `tests/fakes.py`.
 7. Code has no comments except the few that explain a non-obvious reason, such as why a lock or a lease exists.
 
+Branches. One branch per slice, named by commit type (`feat/webhook-idempotency`, `docs/spec-and-agent-config`, `fix/review-findings`), merged into `main` through a pull request with a merge commit, never squash, so the history stays as written. `main` stays green and the VPS pulls only `main`. The pull request description is the report from the `report` skill.
+
 Slices. Each is a commit or a few, with the module and its tests together. Deploy the skeleton after S0, then redeploy after S1, S4 and S6.
 
 | Slice | Content | Done when |
