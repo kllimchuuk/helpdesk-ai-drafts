@@ -24,5 +24,11 @@ htmlcov/
 .idea/
 .vscode/
 
+# Original test task (company material, keep out of git)
+docs/*.docx
+
+# Claude Code local settings
+.claude/settings.local.json
+
 # OS
 .DS_Store
