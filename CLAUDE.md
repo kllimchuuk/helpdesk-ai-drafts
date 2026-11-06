@@ -49,7 +49,7 @@ Available as the slices land (SPEC §13):
 
 ## Stack and dependencies
 
-Python 3.12, FastAPI, SQLAlchemy 2 (async) + asyncpg, Alembic, PostgreSQL 16, httpx, the official Anthropic SDK (`claude-haiku-5-5`), pydantic-settings, pytest, ruff, `uv`. The UI is static HTML, Bootstrap from a CDN and plain JavaScript, served by nginx.
+Python 3.12, FastAPI, SQLAlchemy 2 (async) + asyncpg, Alembic, PostgreSQL 16, httpx, the official Anthropic SDK (`claude-haiku-5-5`), pydantic-settings, pytest and pytest-asyncio, ruff, `uv`. The UI is static HTML, Bootstrap from a CDN and plain JavaScript, served by nginx.
 
 A new dependency needs an entry in `docs/DECISIONS.md` first. Not used on purpose: Celery, Redis, RabbitMQ (the queue is Postgres, DECISIONS 2026-11-06), LangChain, React, any build step for the frontend.
 
