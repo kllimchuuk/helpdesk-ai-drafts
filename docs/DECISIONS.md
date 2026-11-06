@@ -85,3 +85,11 @@ Basis: owner's decision after the agent studied the `cadence` project; SPEC §3,
 4. **Webhook accepts any `reply_url`; the send step refuses private, loopback and link-local addresses unless the host is in `REPLY_URL_ALLOWED_HOSTS`.** Why: the sample payload uses a placeholder domain and must never be rejected, but a body-supplied URL is an SSRF risk. Changed: SPEC §9.
 5. **Rate limiter in Postgres (advisory lock and a sliding window), default 55 calls a minute.** Why: it works across any number of workers without Redis; the margin covers clock skew and provider-side accounting. Changed: SPEC §7.
 6. **Keyless mode sends a real request with a placeholder credential, discards the response, and returns the static reply once a random 5-30 s has elapsed in total.** Why: it matches the task statement while keeping the call inside the same limiter and error handling. Changed: SPEC §8.
+
+## 2026-11-06 - Tooling added with the skeleton
+
+Basis: review of slice S0 (`feat/project-skeleton`) found these dependencies without an entry.
+
+1. **`pytest` and `pytest-asyncio` for tests, `httpx` for both tests and outbound HTTP, `uvicorn[standard]` to serve the app.**
+   Why: the code is async, so tests need an async runner. `httpx.ASGITransport` calls the application in-process without a server, and the same library is the HTTP client for the helpdesk and the provider later, so no second client is added. `uvicorn[standard]` brings the faster event loop and HTTP parser.
+   Changed: `backend/pyproject.toml`, `CLAUDE.md` (stack list).
