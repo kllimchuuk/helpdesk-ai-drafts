@@ -6,7 +6,19 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from config import Settings
 from core.database import build_engine, build_session_factory
-from knowledge_base.exceptions import ArticleFileError
+from knowledge_base.exceptions import (
+    ArticleBodyEmptyError,
+    ArticleContainsNulError,
+    ArticleDirectoryEmptyError,
+    ArticleFileNameMismatchError,
+    ArticleFrontMatterDuplicateKeyError,
+    ArticleFrontMatterLineError,
+    ArticleFrontMatterMissingError,
+    ArticleFrontMatterUnclosedError,
+    ArticleNotUtf8Error,
+    ArticleSlugInvalidError,
+    ArticleTitleInvalidError,
+)
 from knowledge_base.repository import KbRepositoryImpl
 from knowledge_base.schemas import (
     MAX_SLUG_LENGTH,
@@ -22,14 +34,14 @@ FRONT_MATTER_KEYS = ("slug", "title")
 
 def parse_article(text: str, source: str) -> ParsedArticle:
     if "\x00" in text:
-        raise ArticleFileError(f"{source}: NUL characters are not allowed")
+        raise ArticleContainsNulError(source)
     lines = text.splitlines()
     if not lines or lines[0] != "---":
-        raise ArticleFileError(f"{source}: the file must start with front matter")
+        raise ArticleFrontMatterMissingError(source)
     try:
         end = lines.index("---", 1)
     except ValueError:
-        raise ArticleFileError(f"{source}: the front matter is not closed") from None
+        raise ArticleFrontMatterUnclosedError(source) from None
 
     meta: dict[str, str] = {}
     for line in lines[1:end]:
@@ -38,44 +50,36 @@ def parse_article(text: str, source: str) -> ParsedArticle:
         key, separator, value = line.partition(":")
         key = key.strip()
         if not separator or key not in FRONT_MATTER_KEYS:
-            raise ArticleFileError(f"{source}: unexpected front matter line {line!r}")
+            raise ArticleFrontMatterLineError(source, line)
         if key in meta:
-            raise ArticleFileError(f"{source}: {key!r} is given twice")
+            raise ArticleFrontMatterDuplicateKeyError(source, key)
         meta[key] = value.strip()
 
     slug = meta.get("slug", "")
     title = meta.get("title", "")
     if len(slug) > MAX_SLUG_LENGTH or not SLUG_PATTERN.fullmatch(slug):
-        raise ArticleFileError(
-            f"{source}: slug {slug!r} must be lowercase words joined by hyphens"
-        )
+        raise ArticleSlugInvalidError(source, slug)
     if not title or len(title) > MAX_TITLE_LENGTH:
-        raise ArticleFileError(
-            f"{source}: the title must be 1-{MAX_TITLE_LENGTH} characters"
-        )
+        raise ArticleTitleInvalidError(source, MAX_TITLE_LENGTH)
     body = "\n".join(lines[end + 1 :]).strip()
     if not body:
-        raise ArticleFileError(f"{source}: the article has no text")
+        raise ArticleBodyEmptyError(source)
     return ParsedArticle(slug=slug, title=title, body=body)
 
 
 def read_directory(directory: Path) -> list[ParsedArticle]:
     paths = sorted(directory.glob("*.md"))
     if not paths:
-        raise ArticleFileError(f"{directory}: no articles found")
+        raise ArticleDirectoryEmptyError(str(directory))
     articles = []
     for path in paths:
         try:
             text = path.read_text(encoding="utf-8")
         except UnicodeDecodeError:
-            raise ArticleFileError(
-                f"{path.name}: the file is not valid UTF-8"
-            ) from None
+            raise ArticleNotUtf8Error(path.name) from None
         article = parse_article(text, path.name)
         if path.stem != article.slug:
-            raise ArticleFileError(
-                f"{path.name}: the file name must be {article.slug}.md"
-            )
+            raise ArticleFileNameMismatchError(path.name, article.slug)
         articles.append(article)
     return articles
 
