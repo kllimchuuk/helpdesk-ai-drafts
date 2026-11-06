@@ -59,6 +59,12 @@ Article text...
 
 The backend container loads the files into PostgreSQL every time it starts, so to add or change an article edit the file and run `docker compose up -d --build backend`. Read one with `curl -s http://localhost:8080/api/kb/reset-password`. Search by ticket text is done inside the service (PostgreSQL trigram similarity plus full-text rank) and will be used when drafts are generated; see `docs/DECISIONS.md` for how it was tuned and how well it works. If an article file is invalid the loader logs a warning and the service keeps running with the articles already stored.
 
+## LLM calls, rate limit and keyless mode
+
+Drafts will be written by Claude Haiku 5.5 through the official SDK. Every call to the provider goes through one gate stored in PostgreSQL (the `llm_calls` table), so the limit holds for the whole service whatever the number of workers: at most `LLM_RATE_LIMIT_PER_MINUTE` calls in any 60 seconds (default 55, never above 60), and at most `LLM_DAILY_CALL_CAP` real calls per UTC day (default 500), after which the service behaves as if it had no key until midnight UTC. The SDK's own retries are switched off because a retry the gate never counted would break the limit.
+
+Without `ANTHROPIC_API_KEY` (the default, so `docker compose up` needs no configuration) the service still sends a real request with a placeholder credential, ignores the answer, waits until a random 5 to 30 seconds have passed and uses a fixed Ukrainian reply marked as static. Nothing else in the pipeline can tell the difference. The worker that uses this arrives in a later slice; so far the gate and the clients are covered by tests that never touch the network.
+
 ## Develop
 
 Requirements: [uv](https://docs.astral.sh/uv/).
