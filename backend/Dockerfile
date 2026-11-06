@@ -14,10 +14,13 @@ COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-dev
 
 COPY src ./src
+COPY alembic.ini entrypoint.sh ./
+COPY migrations ./migrations
 
-RUN useradd --system --no-create-home app
+RUN chmod +x entrypoint.sh \
+    && useradd --system --no-create-home app
 USER app
 
 EXPOSE 8000
 
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["./entrypoint.sh"]

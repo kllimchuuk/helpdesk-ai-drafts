@@ -56,6 +56,7 @@ See `docs/DECISIONS.md` for alternatives and why they lost.
 ```
 
 - `200 {"status": "accepted"}` for a new event, `200 {"status": "duplicate"}` for a known `event_id`.
+- Fields are trimmed and validated: `event_id` and `ticket_id` 1-255 characters, `customer_email` of the form `x@y` up to 320 characters, `message` 1-20 000 characters, `reply_url` a valid http or https URL. NUL characters are rejected because PostgreSQL text cannot store them. Anything else is `422`.
 - `422` for an invalid body. `503` if the database is unavailable (the helpdesk then retries).
 - The handler validates, inserts, returns. It never calls the LLM, the KB search, or `reply_url`.
 
@@ -63,7 +64,7 @@ See `docs/DECISIONS.md` for alternatives and why they lost.
 
 **Health.** `GET /health` returns `200` with body `OK`. No database call: it is a liveness check.
 
-**Stats.** `GET /api/stats` returns counts per status as JSON (no personal data). The UI header and the simulator use it.
+**Stats.** `GET /api/stats` returns `{"counts": {<status>: n, ...}, "total": n}` with every status present, zeros included (no personal data). The UI header and the simulator use it.
 
 **HTTP surface.**
 
@@ -204,7 +205,7 @@ backend/
   src/
     main.py                           create_app, lifespan, error handlers, /health
     config.py                         Settings; defaults so compose works without .env
-    core/        database, repository (generic CRUD), exceptions, base_model, registry, sql,
+    core/        database, exceptions, base_model, registry, sql (a generic CRUD repository is added when a feature first needs it),
                  security (Basic Auth), logging (JSON), clock (injectable now())
     webhooks/    router, schemas, service (ingest)
     tickets/     models, status, repository, service, schemas, exceptions,
@@ -236,7 +237,7 @@ Rules, taken from `cadence`:
 3. Domain errors subclass `AppException(code, message, payload)` and are rendered as `{code, message, payload}`.
 4. All SQL lives in repositories, including `SKIP LOCKED`, `ON CONFLICT`, advisory locks and atomic status transitions.
 5. No database transaction stays open during a provider call or a helpdesk call: claim in one short transaction, work outside it, save the result in another.
-6. Tests run against a real Postgres. The test database name must end with `_test` and differ from the development one; each test runs in a rolled-back transaction. Fakes (`FakeLLMClient`, failing and flaky variants) live in `tests/fakes.py`.
+6. Tests run against a real Postgres. The test database name must end with `_test` and differ from the development one; each test starts from empty tables (`TRUNCATE`), because the concurrency tests need real commits across connections. Fakes (`FakeLLMClient`, failing and flaky variants) live in `tests/fakes.py`.
 7. Code has no comments except the few that explain a non-obvious reason, such as why a lock or a lease exists.
 
 Branches. One branch per slice, named by commit type (`feat/webhook-idempotency`, `docs/spec-and-agent-config`, `fix/review-findings`), merged into `main` through a pull request with a merge commit, never squash, so the history stays as written. `main` stays green and the VPS pulls only `main`. The pull request description is the report from the `report` skill.
@@ -247,7 +248,7 @@ Slices. Each is a commit or a few, with the module and its tests together. Deplo
 |---|---|---|
 | S-1 | `CLAUDE.md`, `.claude/`, SPEC, DECISIONS | reviewed by the user |
 | S0 | project skeleton, settings, `/health`, Dockerfile, compose (db, backend, frontend placeholder), `ruff` + `pytest` | `docker compose up` serves `/health`; deployed to the VPS |
-| S1 | schema, Alembic, webhook, `/api/stats` | I1, I2, I3 tests green |
+| S1 | schema, Alembic, webhook, `/api/stats` | I2 fully, and the durable-write parts of I1 and I3, green; the full I1 run (simulator, S7) and I3 run (worker, S4) come later, see DECISIONS 2026-11-06 S1 item 12 |
 | S2 | KB seed (8 Ukrainian articles), search, `/api/kb/{slug}` | relevant article found for 5 sample tickets |
 | S3 | LLM client, limiter, daily cap, keyless mode | I4, I8, I9 tests green |
 | S4 | generation worker with leases and retries | I5 test green |

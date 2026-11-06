@@ -2,6 +2,7 @@ from starlette.status import (
     HTTP_404_NOT_FOUND,
     HTTP_409_CONFLICT,
     HTTP_500_INTERNAL_SERVER_ERROR,
+    HTTP_503_SERVICE_UNAVAILABLE,
 )
 
 
@@ -26,3 +27,15 @@ class ConflictError(AppException):
 
 class NotFoundError(AppException):
     status_code = HTTP_404_NOT_FOUND
+
+
+class ServiceUnavailableError(AppException):
+    status_code = HTTP_503_SERVICE_UNAVAILABLE
+
+
+class DatabaseUnavailableError(ServiceUnavailableError):
+    def __init__(self) -> None:
+        super().__init__(
+            code="database_unavailable",
+            message="The database is unavailable. Retry later.",
+        )
