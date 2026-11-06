@@ -31,6 +31,7 @@ Requirements: [uv](https://docs.astral.sh/uv/).
 ```bash
 cd backend
 uv sync
+uv run uvicorn main:app --reload --app-dir src
 uv run pytest
 uv run ruff check . && uv run ruff format --check .
 ```

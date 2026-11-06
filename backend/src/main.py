@@ -1,6 +1,5 @@
 import logging
 
-import uvicorn
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
@@ -53,6 +52,3 @@ def create_app(app_settings: Settings | None = None) -> FastAPI:
 
 
 app = create_app()
-
-if __name__ == "__main__":
-    uvicorn.run("main:app", host=settings.APP_HOST, port=settings.APP_PORT)
