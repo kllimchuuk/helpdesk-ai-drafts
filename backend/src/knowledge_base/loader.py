@@ -36,17 +36,28 @@ def parse_article(text: str, source: str) -> ParsedArticle:
     if "\x00" in text:
         raise ArticleContainsNulError(source)
     lines = text.splitlines()
+    end = find_front_matter_end(lines, source)
+    meta = parse_front_matter(lines[1:end], source)
+    slug = validated_slug(meta.get("slug", ""), source)
+    title = validated_title(meta.get("title", ""), source)
+    body = "\n".join(lines[end + 1 :]).strip()
+    if not body:
+        raise ArticleBodyEmptyError(source)
+    return ParsedArticle(slug=slug, title=title, body=body)
+
+
+def find_front_matter_end(lines: list[str], source: str) -> int:
     if not lines or lines[0] != "---":
         raise ArticleFrontMatterMissingError(source)
     try:
-        end = lines.index("---", 1)
+        return lines.index("---", 1)
     except ValueError:
         raise ArticleFrontMatterUnclosedError(source) from None
 
+
+def parse_front_matter(lines: list[str], source: str) -> dict[str, str]:
     meta: dict[str, str] = {}
-    for line in lines[1:end]:
-        if not line.strip():
-            continue
+    for line in filter(str.strip, lines):
         key, separator, value = line.partition(":")
         key = key.strip()
         if not separator or key not in FRONT_MATTER_KEYS:
@@ -54,17 +65,19 @@ def parse_article(text: str, source: str) -> ParsedArticle:
         if key in meta:
             raise ArticleFrontMatterDuplicateKeyError(source, key)
         meta[key] = value.strip()
+    return meta
 
-    slug = meta.get("slug", "")
-    title = meta.get("title", "")
+
+def validated_slug(slug: str, source: str) -> str:
     if len(slug) > MAX_SLUG_LENGTH or not SLUG_PATTERN.fullmatch(slug):
         raise ArticleSlugInvalidError(source, slug)
+    return slug
+
+
+def validated_title(title: str, source: str) -> str:
     if not title or len(title) > MAX_TITLE_LENGTH:
         raise ArticleTitleInvalidError(source, MAX_TITLE_LENGTH)
-    body = "\n".join(lines[end + 1 :]).strip()
-    if not body:
-        raise ArticleBodyEmptyError(source)
-    return ParsedArticle(slug=slug, title=title, body=body)
+    return title
 
 
 def read_directory(directory: Path) -> list[ParsedArticle]:
