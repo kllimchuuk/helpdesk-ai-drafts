@@ -1,3 +1,5 @@
+import math
+
 import anthropic
 from anthropic import AsyncAnthropic
 from anthropic.types import Message
@@ -36,9 +38,11 @@ class AnthropicProvider(LLMClient):
                 output_config=OUTPUT_CONFIG,
             )
         except anthropic.APIStatusError as error:
-            raise classify_status(error) from error
+            raise classify_status(error) from None
         except anthropic.APIConnectionError as error:
-            raise LLMTransientError(type(error).__name__) from error
+            raise LLMTransientError(type(error).__name__) from None
+        except anthropic.APIError as error:
+            raise LLMInvalidOutputError(type(error).__name__) from None
         return to_result(response)
 
 
@@ -53,21 +57,26 @@ def classify_status(error: anthropic.APIStatusError) -> LLMError:
 
 def parse_retry_after(headers: object) -> float | None:
     try:
-        return float(headers.get("retry-after"))
+        seconds = float(headers.get("retry-after"))
     except (TypeError, ValueError):
         return None
+    return seconds if math.isfinite(seconds) and seconds >= 0 else None
 
 
-def to_result(response: Message) -> LLMResult:
+def to_result(response: object) -> LLMResult:
+    if not isinstance(response, Message):
+        raise LLMInvalidOutputError("the response is not a message")
     if response.stop_reason == "refusal":
         raise LLMRefusalError()
     if response.stop_reason == "max_tokens":
         raise LLMInvalidOutputError("the answer was cut off")
-    text = "".join(block.text for block in response.content if block.type == "text")
+    text = "".join(
+        block.text for block in response.content or [] if block.type == "text"
+    )
     try:
         output = DraftOutput.model_validate_json(text)
-    except ValidationError as error:
-        raise LLMInvalidOutputError("the answer does not match the schema") from error
+    except ValidationError:
+        raise LLMInvalidOutputError("the answer does not match the schema") from None
     return LLMResult(
         reply=output.reply, cited_slugs=output.cited_slugs, is_static=False
     )

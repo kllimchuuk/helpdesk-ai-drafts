@@ -195,3 +195,57 @@ async def test_a_refusal_is_reported_as_such() -> None:
 async def test_output_that_does_not_fit_the_schema_is_invalid(body: dict) -> None:
     with pytest.raises(LLMInvalidOutputError):
         await provider(answer(200, body)).complete(REQUEST)
+
+
+@pytest.mark.parametrize(
+    "value", ["inf", "nan", "-5", "soon", "Wed, 21 Oct 2026 07:28:00 GMT"]
+)
+async def test_an_unusable_retry_after_is_dropped(value: str) -> None:
+    recorder = answer(
+        429,
+        {"type": "error", "error": {"type": "rate_limit_error", "message": "x"}},
+        headers={"retry-after": value},
+    )
+
+    with pytest.raises(LLMRateLimitedError) as caught:
+        await provider(recorder).complete(REQUEST)
+
+    assert caught.value.retry_after is None
+
+
+async def test_errors_do_not_carry_the_provider_response_as_their_cause() -> None:
+    recorder = answer(
+        500, {"type": "error", "error": {"type": "api_error", "message": "secret text"}}
+    )
+
+    with pytest.raises(LLMTransientError) as caught:
+        await provider(recorder).complete(REQUEST)
+
+    assert caught.value.__cause__ is None
+    assert "secret text" not in repr(caught.value)
+
+
+async def test_a_reply_that_breaks_the_schema_does_not_leak_into_the_error() -> None:
+    body = message(json.dumps({"reply": "customer secret", "cited_slugs": "oops"}))
+
+    with pytest.raises(LLMInvalidOutputError) as caught:
+        await provider(answer(200, body)).complete(REQUEST)
+
+    assert caught.value.__cause__ is None
+    assert "customer secret" not in repr(caught.value)
+
+
+@pytest.mark.parametrize(
+    "response",
+    [
+        httpx2.Response(200, json={}),
+        httpx2.Response(200, json={"content": None, "stop_reason": None}),
+        httpx2.Response(200, text="<html>bad gateway</html>"),
+        httpx2.Response(200, content=b""),
+    ],
+)
+async def test_a_malformed_success_response_is_an_invalid_output(
+    response: httpx2.Response,
+) -> None:
+    with pytest.raises(LLMError):
+        await provider(Recorder(lambda request: response)).complete(REQUEST)

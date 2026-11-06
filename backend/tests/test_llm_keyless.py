@@ -1,10 +1,13 @@
+import asyncio
+
 import httpx2
 import pytest
 from anthropic import AsyncAnthropic
 
 from llm.anthropic_client import AnthropicProvider
+from llm.client import LLMClient
 from llm.keyless import PLACEHOLDER_API_KEY, STATIC_REPLY, KeylessClient
-from llm.schemas import LLMRequest
+from llm.schemas import LLMRequest, LLMResult
 from tests.test_llm_client import REQUEST, Recorder, answer, credential, draft
 
 
@@ -77,6 +80,46 @@ async def test_the_response_is_ignored_whatever_it_is(recorder: Recorder) -> Non
 
     assert result.reply == STATIC_REPLY
     assert result.cited_slugs == []
+    assert result.is_static is True
+
+
+@pytest.mark.parametrize(
+    "response",
+    [
+        httpx2.Response(200, json={}),
+        httpx2.Response(200, json={"content": None, "stop_reason": None}),
+        httpx2.Response(200, text="<html>bad gateway</html>"),
+        httpx2.Response(200, content=b""),
+    ],
+)
+async def test_a_malformed_success_response_is_ignored_too(
+    response: httpx2.Response,
+) -> None:
+    result = await keyless(Recorder(lambda request: response), FakeTime()).complete(
+        REQUEST
+    )
+
+    assert result.is_static is True
+
+
+class HangingProbe(LLMClient):
+    async def complete(self, request: LLMRequest) -> LLMResult:
+        await asyncio.sleep(30)
+        raise AssertionError("the probe should have been cut off")
+
+
+async def test_a_hanging_request_is_cut_off_at_the_delay() -> None:
+    clock = FakeTime()
+    client = KeylessClient(
+        HangingProbe(),
+        delay_min=0.05,
+        delay_max=0.05,
+        sleep=clock.sleep,
+        monotonic=clock.monotonic,
+    )
+
+    result = await asyncio.wait_for(client.complete(REQUEST), timeout=5)
+
     assert result.is_static is True
 
 

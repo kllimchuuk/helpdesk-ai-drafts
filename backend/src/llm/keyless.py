@@ -4,7 +4,6 @@ import time
 from collections.abc import Awaitable, Callable
 
 from llm.client import LLMClient
-from llm.exceptions import LLMError
 from llm.schemas import LLMRequest, LLMResult
 
 PLACEHOLDER_API_KEY = "keyless-mode-placeholder"
@@ -37,10 +36,12 @@ class KeylessClient(LLMClient):
         started = self._monotonic()
         delay = self._uniform(self._delay_min, self._delay_max)
         try:
-            await self._probe.complete(request)
-        except LLMError:
-            # The request exists to behave like the keyed path; its outcome, an
-            # authentication error included, is expected and discarded.
+            async with asyncio.timeout(delay):
+                await self._probe.complete(request)
+        except Exception:
+            # The request exists to behave like the keyed path; whatever comes
+            # back, an authentication error or a broken body, is discarded, and a
+            # hanging connection is cut off when the delay is over.
             pass
         remaining = delay - (self._monotonic() - started)
         if remaining > 0:
