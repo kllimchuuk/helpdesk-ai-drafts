@@ -22,6 +22,8 @@ services:
     environment:
       APP_ENV: ${APP_ENV:-local}
       DATABASE_URL: postgresql+asyncpg://postgres:postgres@db:5432/helpdesk
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      LLM_DAILY_CALL_CAP: ${LLM_DAILY_CALL_CAP:-500}
     depends_on:
       db:
         condition: service_healthy

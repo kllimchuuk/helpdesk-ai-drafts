@@ -28,3 +28,29 @@ def test_unknown_environment_variables_are_ignored(
     monkeypatch.setenv("SOMETHING_ELSE", "x")
 
     Settings(_env_file=None)
+
+
+def test_the_llm_settings_have_safe_defaults() -> None:
+    settings = Settings(_env_file=None)
+
+    assert settings.ANTHROPIC_API_KEY.get_secret_value() == ""
+    assert settings.LLM_MODEL == "claude-haiku-5-5"
+    assert settings.LLM_RATE_LIMIT_PER_MINUTE == 55
+    assert settings.LLM_DAILY_CALL_CAP == 500
+    assert (settings.KEYLESS_DELAY_MIN_S, settings.KEYLESS_DELAY_MAX_S) == (5, 30)
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"LLM_RATE_LIMIT_PER_MINUTE": 0},
+        {"LLM_RATE_LIMIT_PER_MINUTE": 61},
+        {"LLM_DAILY_CALL_CAP": -1},
+        {"KEYLESS_DELAY_MIN_S": 31},
+        {"KEYLESS_DELAY_MIN_S": -1},
+        {"LLM_REQUEST_TIMEOUT_S": 0},
+    ],
+)
+def test_unsafe_llm_settings_are_rejected(overrides: dict[str, int]) -> None:
+    with pytest.raises(ValueError):
+        Settings(_env_file=None, **overrides)
