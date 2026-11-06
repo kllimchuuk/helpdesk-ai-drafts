@@ -112,3 +112,16 @@ Basis: owner asked to check the final-review agent against best practice (offici
 3. **The checklist is preloaded with `skills: [invariants-check]`**, and the agent has `effort: high` and `maxTurns: 30`.
 4. **Untrusted text is rendered with `textContent`, and operator POSTs require a custom header (CSRF).** The review found these two gaps in the design itself, not only in the agent: customer text reaches the operator's browser, and Basic Auth credentials are resent cross-site by browsers.
    Changed: `.claude/agents/reviewer.md`, `.claude/skills/invariants-check/SKILL.md`, SPEC §10.
+
+## 2026-11-06 - Webhook and schema choices (slice S1)
+
+Basis: implementation of S1 (`feat/webhook-idempotency`). **Recommendation**, in effect once the owner merges it.
+
+1. **The repository commits before the webhook returns.** `TicketRepositoryImpl.insert_if_new` calls `commit()` itself instead of relying on `get_db`, which commits after the endpoint returns. With the installed FastAPI that post-`yield` code runs after the response has started, so without the explicit commit the helpdesk could see `200` before the row is durable. A test reads the database from a second connection at the moment `http.response.start` is sent, and it fails if the commit is removed (checked by mutation).
+   Changed: `backend/src/tickets/repository.py`, `backend/tests/test_webhook.py`.
+2. **An unreachable database becomes `503`.** `asyncpg` reports a refused connection or an unresolvable host as a bare `OSError`, and lost connections as `OperationalError` or `InterfaceError`. The decorator `translate_unavailable` maps these to `DatabaseUnavailableError` (`503`, code `database_unavailable`) so the helpdesk retries. Other database errors stay `500` so bugs are not hidden as outages.
+   Changed: `backend/src/core/database.py`, `backend/src/core/exceptions.py`.
+3. **Webhook field limits** (SPEC §4): 255 characters for ids, 320 for the email, 20 000 for the message, http or https `reply_url`. The task states none; the limits bound row size and reject junk. The email check is a plain `x@y` pattern because strict validation would need an extra dependency and a valid-looking address is all the service uses.
+4. **The whole `ticket_events` table is created in S1**, including draft, attempt and lease columns that later slices fill, because SPEC §6 defines it as one table. The first Alembic revision builds it; models and migration are compared in a test.
+5. **`/api/stats` returns every status**, zeros included, plus a total, so the UI and the simulator need no special cases for empty states.
+6. **No generic CRUD base repository yet.** The `cadence` project has one; here no feature needs it, so it will be added by the first feature that does.

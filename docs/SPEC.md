@@ -56,6 +56,7 @@ See `docs/DECISIONS.md` for alternatives and why they lost.
 ```
 
 - `200 {"status": "accepted"}` for a new event, `200 {"status": "duplicate"}` for a known `event_id`.
+- Fields are trimmed and validated: `event_id` and `ticket_id` 1-255 characters, `customer_email` of the form `x@y` up to 320 characters, `message` 1-20 000 characters, `reply_url` a valid http or https URL. Anything else is `422`.
 - `422` for an invalid body. `503` if the database is unavailable (the helpdesk then retries).
 - The handler validates, inserts, returns. It never calls the LLM, the KB search, or `reply_url`.
 
@@ -63,7 +64,7 @@ See `docs/DECISIONS.md` for alternatives and why they lost.
 
 **Health.** `GET /health` returns `200` with body `OK`. No database call: it is a liveness check.
 
-**Stats.** `GET /api/stats` returns counts per status as JSON (no personal data). The UI header and the simulator use it.
+**Stats.** `GET /api/stats` returns `{"counts": {<status>: n, ...}, "total": n}` with every status present, zeros included (no personal data). The UI header and the simulator use it.
 
 **HTTP surface.**
 
@@ -204,7 +205,7 @@ backend/
   src/
     main.py                           create_app, lifespan, error handlers, /health
     config.py                         Settings; defaults so compose works without .env
-    core/        database, repository (generic CRUD), exceptions, base_model, registry, sql,
+    core/        database, exceptions, base_model, registry, sql (a generic CRUD repository is added when a feature first needs it),
                  security (Basic Auth), logging (JSON), clock (injectable now())
     webhooks/    router, schemas, service (ingest)
     tickets/     models, status, repository, service, schemas, exceptions,
