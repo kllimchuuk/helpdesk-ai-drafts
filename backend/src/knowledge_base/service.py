@@ -1,4 +1,5 @@
 import re
+from itertools import islice
 from typing import Annotated
 
 from fastapi import Depends
@@ -35,15 +36,13 @@ WORD_PATTERN = re.compile(r"[^\W_]+")
 
 
 def extract_words(text: str) -> list[str]:
-    cleaned = APOSTROPHE_PATTERN.sub("", text.lower())
-    words: list[str] = []
-    for word in WORD_PATTERN.findall(cleaned):
-        if len(word) < MIN_WORD_LENGTH or word in STOP_WORDS or word in words:
-            continue
-        words.append(word)
-        if len(words) == MAX_WORDS:
-            break
-    return words
+    tokens = WORD_PATTERN.findall(APOSTROPHE_PATTERN.sub("", text.lower()))
+    meaningful = filter(is_meaningful, tokens)
+    return list(islice(dict.fromkeys(meaningful), MAX_WORDS))
+
+
+def is_meaningful(word: str) -> bool:
+    return len(word) >= MIN_WORD_LENGTH and word not in STOP_WORDS
 
 
 class KbService:
@@ -64,16 +63,21 @@ class KbService:
         if not words:
             return []
         scored = await self._repository.score_articles(words, STRONG_SIMILARITY)
+        relevant = [item for item in scored if self._is_relevant(item)]
+        matches = [self._to_match(item) for item in relevant]
+        matches.sort(key=lambda match: match.score, reverse=True)
+        return matches[:RESULT_LIMIT]
+
+    def _is_relevant(self, item: ArticleScore) -> bool:
         # A long ticket dilutes the mean word similarity, so an article also
         # counts when several of the words match it strongly.
-        relevant = [
-            KbMatch(slug=item.slug, title=item.title, score=self._score(item))
-            for item in scored
-            if self._score(item) >= self._min_score
+        return (
+            self._score(item) >= self._min_score
             or item.strong_words >= MIN_STRONG_WORDS
-        ]
-        relevant.sort(key=lambda match: match.score, reverse=True)
-        return relevant[:RESULT_LIMIT]
+        )
+
+    def _to_match(self, item: ArticleScore) -> KbMatch:
+        return KbMatch(slug=item.slug, title=item.title, score=self._score(item))
 
     @staticmethod
     def _score(item: ArticleScore) -> float:
