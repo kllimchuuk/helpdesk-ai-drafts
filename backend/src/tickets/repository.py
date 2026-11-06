@@ -65,7 +65,7 @@ class TicketRepositoryImpl(TicketRepository):
         rows = await self._session.execute(
             select(TicketEvent.status, func.count()).group_by(TicketEvent.status)
         )
-        return {status: count for status, count in rows.all()}
+        return dict(rows.tuples().all())
 
 
 def get_ticket_repository(
