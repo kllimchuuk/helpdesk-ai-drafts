@@ -446,3 +446,23 @@ async def test_an_ambiguous_last_attempt_stays_unknown_when_ambiguity_may_retry(
 
     assert row.status == TicketStatus.SEND_UNKNOWN
     assert row.send_attempts == 2
+
+
+async def test_a_resend_after_the_cap_that_fails_is_not_retried(
+    db_client: AsyncClient, session_factory: async_sessionmaker[AsyncSession]
+) -> None:
+    [ticket_id] = await approved_tickets(session_factory)
+    async with session_factory() as session:
+        await session.execute(
+            update(TicketEvent).values(
+                status=TicketStatus.SEND_UNKNOWN, send_attempts=FAST.max_attempts
+            )
+        )
+        await session.commit()
+
+    await db_client.post(f"/api/tickets/{ticket_id}/resend", **OPERATOR)
+    helpdesk = FakeHelpdesk(status=503)
+    [row] = await run_to_end(session_factory, helpdesk)
+
+    assert row.status == TicketStatus.SEND_FAILED
+    assert len(helpdesk.requests) == 1
