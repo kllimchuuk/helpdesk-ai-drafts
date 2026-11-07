@@ -95,6 +95,10 @@ async def send_events(
         delay = started + index * interval - time.monotonic()
         if delay > 0:
             await asyncio.sleep(delay)
+        if report.fatal:
+            # Every further webhook would cost a provider call for a draft that
+            # can never be approved.
+            break
         event = build_event(run_id, index, options, rng.choice)
         copies = copies_for(rng.random(), options)
         if copies > 1:

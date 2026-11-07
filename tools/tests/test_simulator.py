@@ -1,4 +1,5 @@
 import json
+import time
 from collections import Counter
 
 import httpx
@@ -256,6 +257,7 @@ def test_json_on_stdout_stays_parseable(capsys: pytest.CaptureFixture[str]) -> N
 
 
 async def test_rejected_operator_credentials_stop_the_run_at_once() -> None:
+    """No more webhooks, and so no more provider calls, once approving is hopeless."""
     service = FakeService()
 
     def refuse_operator(request: httpx.Request) -> httpx.Response:
@@ -263,16 +265,50 @@ async def test_rejected_operator_credentials_stop_the_run_at_once() -> None:
             return httpx.Response(401, json={"code": "operator_auth_required"})
         return service.backend(request)
 
+    started = time.monotonic()
     report = await run(
-        options(events=2, drain_timeout=30.0),
+        options(events=50, duration=10.0, drain_timeout=30.0),
         transport=httpx.MockTransport(refuse_operator),
         mock_transport=httpx.MockTransport(service.mock),
     )
+    elapsed = time.monotonic() - started
     summary = report.summary()
 
     assert summary["fatal"] == "operator API answered 401"
-    assert summary["drain_seconds"] is None
     assert problems(summary) == ["operator API answered 401"]
+    assert elapsed < 2.0
+    assert summary["events"] < 5
+
+
+async def test_a_failed_mock_reset_stops_the_run_before_sending() -> None:
+    service = FakeService()
+
+    report = await run(
+        options(events=5),
+        transport=httpx.MockTransport(service.backend),
+        mock_transport=httpx.MockTransport(lambda request: httpx.Response(500)),
+    )
+
+    assert problems(report.summary()) == ["mock reset failed: http_500"]
+    assert service.events == set()
+
+
+async def test_unexpected_approve_answers_are_counted() -> None:
+    service = FakeService()
+
+    def refuse_approve(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/approve"):
+            return httpx.Response(500)
+        return service.backend(request)
+
+    report = await run(
+        options(events=2, drain_timeout=1.5),
+        transport=httpx.MockTransport(refuse_approve),
+        mock_transport=httpx.MockTransport(service.mock),
+    )
+
+    assert report.summary()["approve_errors"]["http_500"] >= 2
+    assert report.approved == 0
 
 
 async def test_a_run_without_a_drain_wait_only_sends() -> None:
