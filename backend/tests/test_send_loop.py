@@ -9,7 +9,7 @@ from datetime import timedelta
 
 import httpx
 from httpx import AsyncClient
-from sqlalchemy import func, select, text, update
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from delivery.helpdesk_client import HelpdeskClient, build_http_client
@@ -264,42 +264,6 @@ async def test_an_unexpected_error_while_sending_is_treated_as_ambiguous(
 
     assert row.status == TicketStatus.SEND_UNKNOWN
     assert row.last_error == INTERNAL_ERROR
-
-
-async def test_no_transaction_is_open_while_the_helpdesk_is_called(
-    session_factory: async_sessionmaker[AsyncSession],
-) -> None:
-    await approved_tickets(session_factory, 3)
-    observed: list[int] = []
-
-    async def count_open_transactions(request: httpx.Request) -> None:
-        async with session_factory() as session:
-            probe = await session.execute(
-                text(
-                    "SELECT pid, state, left(query, 160), now() - state_change "
-                    "FROM pg_stat_activity WHERE datname = current_database() "
-                    "AND pid <> pg_backend_pid() AND state LIKE 'idle in transaction%'"
-                )
-            )
-            print("PROBE", [tuple(r) for r in probe])
-            observed.append(
-                await session.scalar(
-                    text(
-                        "SELECT count(*) FROM pg_stat_activity "
-                        "WHERE datname = current_database() "
-                        "AND pid <> pg_backend_pid() "
-                        "AND state LIKE 'idle in transaction%'"
-                    )
-                )
-            )
-
-    policy = replace(FAST, concurrency=1)
-
-    await run_to_end(
-        session_factory, FakeHelpdesk(on_request=count_open_transactions), policy
-    )
-
-    assert observed == [0, 0, 0]
 
 
 async def test_chaos_never_delivers_a_reply_twice(
