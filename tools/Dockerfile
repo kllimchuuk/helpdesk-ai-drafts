@@ -14,6 +14,7 @@ COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-dev
 
 COPY mock_helpdesk ./mock_helpdesk
+COPY simulator ./simulator
 
 RUN useradd --system --no-create-home app
 USER app

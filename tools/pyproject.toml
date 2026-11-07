@@ -5,12 +5,12 @@ description = "Mock helpdesk and load simulator for Helpdesk AI Drafts; not part
 requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.115.0",
+    "httpx>=0.28.0",
     "uvicorn[standard]>=0.32.0",
 ]
 
 [dependency-groups]
 dev = [
-    "httpx>=0.28.0",
     "pytest>=8.3.0",
     "pytest-asyncio>=0.24.0",
     "ruff>=0.8.0",

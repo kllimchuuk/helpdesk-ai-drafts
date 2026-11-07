@@ -260,3 +260,30 @@ Review findings (reviewer pass 1, "Fix before merge": two important, two minor, 
 23. **NAT64 addresses are not public.** Python counts `64:ff9b::/96` as global, but on a network with a NAT64 gateway it reaches the embedded IPv4 address, which may be private. Both NAT64 prefixes are refused; the test fails without the check for `64:ff9b::/96`.
 24. **The mock's `SEED` is documented** (SPEC §11, `.env.example`, compose) and SPEC §13 lists the real files of `delivery/` and `workers/`.
 25. **Known limit, not changed: stopping the worker cancels sends in flight**, including ones still resolving DNS that certainly never left; after the lease they are `send_unknown` and need an operator click. This errs on the safe side of I6. With a deploy every few hours and 10 sends at most in flight it is a handful of clicks.
+
+## 2026-11-07 - Simulator and measured run (slice S7)
+
+Basis: implementation of S7 (`feat/simulator`). Choices by the agent where SPEC §11 is silent. **Recommendation**, in effect once the owner merges the slice.
+
+1. **The simulator can approve its own drafts (`--approve`).** Without an operator nothing reaches the send path, so neither I6 nor the "time until drained" could be measured. It approves only tickets whose id starts with its run prefix, through the same operator API and CSRF header as the UI. Changed: SPEC §11.
+2. **A duplicated event is sent as `--concurrent-duplicates` simultaneous copies** (default 3) for a `--duplicate-rate` fraction of events (default 0.1), which tests the concurrent case of I2 under load; a dedupe error is an event accepted more than once or never.
+3. **Latency is measured per webhook request at the client** (`perf_counter` around the POST), percentiles by nearest rank. "Drained" is measured from the last webhook.
+4. **The simulator lives in `tools/` with the mock and shares its image;** `httpx` moves to the tools' runtime dependencies. Compose has a `simulator` service in the `tools` profile, so `docker compose up` does not start it and `docker compose run --rm simulator ...` does. It never imports backend code.
+5. **Measured runs use a separate compose project with a fresh database** (`COMPOSE_PROJECT_NAME=helpdesk-measure`): the simulator resets the mock's counts and `/api/stats` counts every ticket, so the owner's local data would have mixed into the numbers. The owner's stack was stopped, not removed, during the runs and restarted afterwards.
+6. **The real-process kill runs for I3, I5 and I6 are shell steps around the simulator** (`docker kill -s KILL`, restart, poll `/api/stats`), recorded with their commands in `docs/REPORT.md`; they are not automated in the simulator, which only sends and measures.
+7. **The first run was disturbed by the laptop sleeping for 197 s** and is reported as it happened rather than repeated: the pause expired every lease in flight, and the service parked the 3 sends and redid the 12 generations as designed. Later runs were wrapped in `caffeinate -i`.
+
+Review findings (reviewer pass 1, "Fix before merge"), fixed in one commit:
+
+8. **REPORT stated 50 copied events; the measured figure is 65.** The 50 was `--duplicate-rate 0.1` times 500, written as if measured; 130 `duplicate` answers mean 65 copied events, which a replay of the seeded draws confirms. The simulator now prints the number of copied events. REPORT also records the exact commands of run 3 and every SQL query behind its figures, and says only what the subtraction supports about the 84 `send_unknown` tickets.
+9. **A transient backend error no longer loses the run.** The approver and the drain poll count `httpx` errors, non-200 answers and malformed bodies as `poll_errors` and keep polling; before, one restart or `503` ended the run with a traceback and no report. Tested with a transport that fails three times.
+10. **The approver's own-tickets filter is tested**: a `draft_ready` ticket with another id stays untouched; removing the filter fails the test (mutation).
+11. **The simulator exits with status 1** when an event was accepted twice or never, the queue did not drain, or the mock stored a reply twice, so a run is usable as a check. Dedupe errors are split into "accepted twice" (an I2 violation) and "never accepted" (for example an outage).
+12. **`--json -` writes the summary to stdout**; inside the container the image runs as a non-root user and `--rm` removes files, so a file path is for host runs. The `simulator` service now also depends on the `worker`, so `docker compose run --rm simulator` on a stopped stack starts it.
+
+Review findings (reviewer pass 2, "Fix before merge": two important, four minor), fixed in one commit. Both important ones came from the pass-1 fixes:
+
+13. **`--drain-timeout 0` is no longer a failure.** It means "only send and measure", as run 2 does; the exit status counted the missing drain time as "did not drain", so the documented recipe exited 1 before the `docker kill` step. The drain check now applies only when a drain wait was asked for.
+14. **A `401` or `403` from the operator API stops the run at once**, sending included, and is reported as the cause; every further webhook would cost a provider call for a draft that can never be approved (review pass 3 found that the first version of this fix kept sending until `--duration` ended, and a test now bounds the run's time). Counting every error as a transient poll error had turned a wrong `OPERATOR_PASSWORD` into a 15-minute wait ending in an unexplained "did not drain". Poll errors are now counted by kind (`ConnectError`, `http_503`, ...), and approve answers other than `200` and `409` are counted too.
+15. **`--json -` keeps stdout parseable**: the readable text goes to stderr in that case.
+16. **The mock's reset and counts are checked**: a failed reset stops the run, and missing delivery counts fail it, because otherwise the I6 check would pass without having checked anything. REPORT now shows the `/api/stats` calls of run 2, the seeded replay that gives 65, and the 15.6 s that the wall-time reasoning leaves for start-up and queries.

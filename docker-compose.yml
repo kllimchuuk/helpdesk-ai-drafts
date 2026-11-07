@@ -76,6 +76,21 @@ services:
       # Only for reading /_debug/deliveries from the host.
       - "127.0.0.1:8090:8000"
 
+  simulator:
+    build: ./tools
+    profiles: ["tools"]
+    entrypoint: ["python", "-m", "simulator"]
+    environment:
+      OPERATOR_USER: ${OPERATOR_USER:-operator}
+      OPERATOR_PASSWORD: ${OPERATOR_PASSWORD:-operator}
+    depends_on:
+      backend:
+        condition: service_healthy
+      mock-helpdesk:
+        condition: service_started
+      worker:
+        condition: service_started
+
   frontend:
     build: ./frontend
     depends_on:
