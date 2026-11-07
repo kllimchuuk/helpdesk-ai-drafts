@@ -202,6 +202,7 @@ Review findings (reviewer pass 1, "Fix before merge" and minor), fixed in one co
 20. **Compose passes `LLM_CONCURRENCY` to the worker**, so the value in the root `.env` takes effect.
 21. **The README describes the worker** (status, run, keyless behaviour, scaling).
 22. **Not changed:** delimiter look-alikes with zero-width characters pass the fence (defense in depth only, the system prompt still marks the block as data); a heartbeat cancelled mid-update and a pool peak above 35 connections are unconfirmed, and both end at worst in a skipped heartbeat or a dropped result that the lease recovers.
+23. **Compose forwards every setting the worker reads** (`LLM_*`, `KEYLESS_*`, `KB_MIN_SCORE`, `PUBLIC_BASE_URL`, `ANTHROPIC_API_KEY`) from the root `.env`, with defaults equal to those in `Settings`. A `.env` is excluded from the image, so before this a value such as `LLM_RATE_LIMIT_PER_MINUTE=30` was silently ignored (minor finding of review pass 2). `tests/test_compose.py` reads `docker-compose.yml` with PyYAML, already installed through `uvicorn[standard]`, and fails when a worker setting is missing or its default drifts.
 
 ## 2026-11-07 - Operator UI and review actions (slice S5)
 
