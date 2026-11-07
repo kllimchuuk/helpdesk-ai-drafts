@@ -40,3 +40,21 @@ def test_a_repository_runs_queries_and_holds_no_logic(path: Path) -> None:
     ]
 
     assert found == []
+
+
+@pytest.mark.parametrize("path", REPOSITORIES, ids=lambda path: path.parent.name)
+def test_a_repository_takes_plain_arguments(path: Path) -> None:
+    """No `*`, `*args`, `**kwargs`, keyword-only markers or `**` unpacking."""
+    found = []
+    for node in ast.walk(ast.parse(path.read_text())):
+        if isinstance(node, ast.Starred):
+            found.append(f"line {node.lineno}: * unpacking")
+        elif isinstance(node, ast.arguments) and (
+            node.vararg or node.kwarg or node.kwonlyargs
+        ):
+            first = node.vararg or node.kwarg or node.kwonlyargs[0]
+            found.append(f"line {first.lineno}: *args, **kwargs or keyword-only")
+        elif isinstance(node, ast.keyword) and node.arg is None:
+            found.append(f"line {node.value.lineno}: ** unpacking")
+
+    assert found == []

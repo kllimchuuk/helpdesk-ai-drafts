@@ -57,7 +57,7 @@ A new dependency needs an entry in `docs/DECISIONS.md` first. Not used on purpos
 ## Code
 
 - Layout and rules: SPEC §13. Flat feature packages under `backend/src`, run with `PYTHONPATH=src`; router -> service -> repository, repositories are `ABC` + `Impl`, routers hold no logic.
-- All SQL lives in repositories (`SKIP LOCKED`, `ON CONFLICT`, advisory locks, atomic transitions). Repositories hold no logic: no `if`, loops, `or` defaults or row-to-schema mapping; the service decides and maps (`test_repositories_hold_no_logic.py` fails otherwise).
+- All SQL lives in repositories (`SKIP LOCKED`, `ON CONFLICT`, advisory locks, atomic transitions). Repositories hold no logic: no `if`, loops, `or` defaults or row-to-schema mapping; the service decides and maps. Repository methods take plain arguments: no `*`, `*args`, `**kwargs` or keyword-only markers (`test_repositories_hold_no_logic.py` fails otherwise).
 - No database transaction is open during a provider or helpdesk call.
 - Domain errors subclass `AppException(code, message, payload)`.
 - Settings have defaults so `docker compose up` works with no `.env`.

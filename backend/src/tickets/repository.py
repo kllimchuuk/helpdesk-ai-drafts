@@ -4,7 +4,7 @@ from datetime import timedelta
 from typing import Annotated, Any
 
 from fastapi import Depends
-from sqlalchemy import ColumnElement, Select, func, or_, select, update
+from sqlalchemy import ColumnElement, Select, func, or_, select, true, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -18,7 +18,6 @@ class TicketRepository(ABC):
     @abstractmethod
     async def insert_if_new(
         self,
-        *,
         event_id: str,
         ticket_id: str,
         customer_email: str,
@@ -69,12 +68,12 @@ class TicketRepository(ABC):
         raise NotImplementedError()
 
     @abstractmethod
-    async def requeue_stale_sends(self, *, max_attempts: int, error: str) -> int:
+    async def requeue_stale_sends(self, max_attempts: int, error: str) -> int:
         """Put expired `sending` rows below `max_attempts` back to `approved`."""
         raise NotImplementedError()
 
     @abstractmethod
-    async def park_stale_sends(self, *, error: str) -> int:
+    async def park_stale_sends(self, error: str) -> int:
         """Move expired `sending` rows to `send_unknown`; returns how many."""
         raise NotImplementedError()
 
@@ -84,16 +83,16 @@ class TicketRepository(ABC):
 
     @abstractmethod
     async def retry_send(
-        self, ticket: ClaimedSend, *, delay_seconds: float, error: str
+        self, ticket: ClaimedSend, delay_seconds: float, error: str
     ) -> bool:
         raise NotImplementedError()
 
     @abstractmethod
-    async def fail_send(self, ticket: ClaimedSend, *, error: str) -> bool:
+    async def fail_send(self, ticket: ClaimedSend, error: str) -> bool:
         raise NotImplementedError()
 
     @abstractmethod
-    async def park_unknown(self, ticket: ClaimedSend, *, error: str) -> bool:
+    async def park_unknown(self, ticket: ClaimedSend, error: str) -> bool:
         raise NotImplementedError()
 
     @abstractmethod
@@ -113,7 +112,6 @@ class TicketRepository(ABC):
     async def save_draft(
         self,
         ticket: ClaimedTicket,
-        *,
         text: str,
         sources: list[dict[str, str]],
         low_confidence: bool,
@@ -123,12 +121,12 @@ class TicketRepository(ABC):
 
     @abstractmethod
     async def retry_generation(
-        self, ticket: ClaimedTicket, *, delay_seconds: float, error: str
+        self, ticket: ClaimedTicket, delay_seconds: float, error: str
     ) -> bool:
         raise NotImplementedError()
 
     @abstractmethod
-    async def fail_generation(self, ticket: ClaimedTicket, *, error: str) -> bool:
+    async def fail_generation(self, ticket: ClaimedTicket, error: str) -> bool:
         raise NotImplementedError()
 
 
@@ -139,7 +137,6 @@ class TicketRepositoryImpl(TicketRepository):
     @translate_unavailable
     async def insert_if_new(
         self,
-        *,
         event_id: str,
         ticket_id: str,
         customer_email: str,
@@ -200,40 +197,42 @@ class TicketRepositoryImpl(TicketRepository):
         return await self._operator_transition(
             ticket_id,
             TicketStatus.DRAFT_READY,
-            status=decision,
-            reviewed_at=func.now(),
-            next_attempt_at=func.now(),
-            locked_until=None,
+            {
+                "status": decision,
+                "reviewed_at": func.now(),
+                "next_attempt_at": func.now(),
+                "locked_until": None,
+            },
         )
 
     async def mark_unknown_delivered(self, ticket_id: uuid.UUID) -> TicketEvent | None:
         return await self._operator_transition(
             ticket_id,
             TicketStatus.SEND_UNKNOWN,
-            status=TicketStatus.SENT,
-            sent_at=func.now(),
-            last_error=None,
+            {"status": TicketStatus.SENT, "sent_at": func.now(), "last_error": None},
         )
 
     async def requeue_unknown(self, ticket_id: uuid.UUID) -> TicketEvent | None:
         return await self._operator_transition(
             ticket_id,
             TicketStatus.SEND_UNKNOWN,
-            status=TicketStatus.APPROVED,
-            next_attempt_at=func.now(),
-            locked_until=None,
+            {
+                "status": TicketStatus.APPROVED,
+                "next_attempt_at": func.now(),
+                "locked_until": None,
+            },
         )
 
     @translate_unavailable
     async def _operator_transition(
-        self, ticket_id: uuid.UUID, expected: TicketStatus, **values: Any
+        self, ticket_id: uuid.UUID, expected: TicketStatus, values: dict[str, Any]
     ) -> TicketEvent | None:
         # One conditional UPDATE: of any number of simultaneous clicks only the
         # first finds the row in the expected status, so it changes once (I7).
         row = await self._session.scalar(
             update(TicketEvent)
             .where(TicketEvent.id == ticket_id, TicketEvent.status == expected)
-            .values(**values)
+            .values(values)
             .returning(TicketEvent)
         )
         await self._session.commit()
@@ -279,13 +278,12 @@ class TicketRepositoryImpl(TicketRepository):
         self, ticket: ClaimedTicket, lease_seconds: float
     ) -> bool:
         return await self._finish_generation(
-            ticket, locked_until=func.now() + timedelta(seconds=lease_seconds)
+            ticket, {"locked_until": func.now() + timedelta(seconds=lease_seconds)}
         )
 
     async def save_draft(
         self,
         ticket: ClaimedTicket,
-        *,
         text: str,
         sources: list[dict[str, str]],
         low_confidence: bool,
@@ -293,35 +291,43 @@ class TicketRepositoryImpl(TicketRepository):
     ) -> bool:
         return await self._finish_generation(
             ticket,
-            status=TicketStatus.DRAFT_READY,
-            draft_text=text,
-            draft_sources=sources,
-            low_confidence=low_confidence,
-            draft_is_static=is_static,
-            locked_until=None,
-            last_error=None,
+            {
+                "status": TicketStatus.DRAFT_READY,
+                "draft_text": text,
+                "draft_sources": sources,
+                "low_confidence": low_confidence,
+                "draft_is_static": is_static,
+                "locked_until": None,
+                "last_error": None,
+            },
         )
 
     async def retry_generation(
-        self, ticket: ClaimedTicket, *, delay_seconds: float, error: str
+        self, ticket: ClaimedTicket, delay_seconds: float, error: str
     ) -> bool:
         return await self._finish_generation(
             ticket,
-            status=TicketStatus.RECEIVED,
-            next_attempt_at=func.now() + timedelta(seconds=delay_seconds),
-            locked_until=None,
-            last_error=error,
+            {
+                "status": TicketStatus.RECEIVED,
+                "next_attempt_at": func.now() + timedelta(seconds=delay_seconds),
+                "locked_until": None,
+                "last_error": error,
+            },
         )
 
-    async def fail_generation(self, ticket: ClaimedTicket, *, error: str) -> bool:
+    async def fail_generation(self, ticket: ClaimedTicket, error: str) -> bool:
         return await self._finish_generation(
             ticket,
-            status=TicketStatus.GENERATION_FAILED,
-            locked_until=None,
-            last_error=error,
+            {
+                "status": TicketStatus.GENERATION_FAILED,
+                "locked_until": None,
+                "last_error": error,
+            },
         )
 
-    async def _finish_generation(self, ticket: ClaimedTicket, **values: Any) -> bool:
+    async def _finish_generation(
+        self, ticket: ClaimedTicket, values: dict[str, Any]
+    ) -> bool:
         return await self._finish(
             ticket.id,
             TicketStatus.GENERATING,
@@ -361,19 +367,19 @@ class TicketRepositoryImpl(TicketRepository):
         await self._session.commit()
         return claimed
 
-    async def requeue_stale_sends(self, *, max_attempts: int, error: str) -> int:
+    async def requeue_stale_sends(self, max_attempts: int, error: str) -> int:
         return await self._settle_stale_sends(
             TicketStatus.APPROVED,
             error,
             TicketEvent.send_attempts < max_attempts,
         )
 
-    async def park_stale_sends(self, *, error: str) -> int:
-        return await self._settle_stale_sends(TicketStatus.SEND_UNKNOWN, error)
+    async def park_stale_sends(self, error: str) -> int:
+        return await self._settle_stale_sends(TicketStatus.SEND_UNKNOWN, error, true())
 
     @translate_unavailable
     async def _settle_stale_sends(
-        self, status: TicketStatus, error: str, *conditions: ColumnElement[bool]
+        self, status: TicketStatus, error: str, condition: ColumnElement[bool]
     ) -> int:
         # A `sending` row whose lease expired belongs to a worker that died during
         # the request; one conditional UPDATE moves each such row exactly once.
@@ -382,7 +388,7 @@ class TicketRepositoryImpl(TicketRepository):
             .where(
                 TicketEvent.status == TicketStatus.SENDING,
                 TicketEvent.locked_until < func.now(),
-                *conditions,
+                condition,
             )
             .values(
                 status=status,
@@ -399,37 +405,48 @@ class TicketRepositoryImpl(TicketRepository):
     async def mark_sent(self, ticket: ClaimedSend) -> bool:
         return await self._finish_send(
             ticket,
-            status=TicketStatus.SENT,
-            sent_at=func.now(),
-            locked_until=None,
-            last_error=None,
+            {
+                "status": TicketStatus.SENT,
+                "sent_at": func.now(),
+                "locked_until": None,
+                "last_error": None,
+            },
         )
 
     async def retry_send(
-        self, ticket: ClaimedSend, *, delay_seconds: float, error: str
+        self, ticket: ClaimedSend, delay_seconds: float, error: str
     ) -> bool:
         return await self._finish_send(
             ticket,
-            status=TicketStatus.APPROVED,
-            next_attempt_at=func.now() + timedelta(seconds=delay_seconds),
-            locked_until=None,
-            last_error=error,
+            {
+                "status": TicketStatus.APPROVED,
+                "next_attempt_at": func.now() + timedelta(seconds=delay_seconds),
+                "locked_until": None,
+                "last_error": error,
+            },
         )
 
-    async def fail_send(self, ticket: ClaimedSend, *, error: str) -> bool:
-        return await self._finish_send(
-            ticket, status=TicketStatus.SEND_FAILED, locked_until=None, last_error=error
-        )
-
-    async def park_unknown(self, ticket: ClaimedSend, *, error: str) -> bool:
+    async def fail_send(self, ticket: ClaimedSend, error: str) -> bool:
         return await self._finish_send(
             ticket,
-            status=TicketStatus.SEND_UNKNOWN,
-            locked_until=None,
-            last_error=error,
+            {
+                "status": TicketStatus.SEND_FAILED,
+                "locked_until": None,
+                "last_error": error,
+            },
         )
 
-    async def _finish_send(self, ticket: ClaimedSend, **values: Any) -> bool:
+    async def park_unknown(self, ticket: ClaimedSend, error: str) -> bool:
+        return await self._finish_send(
+            ticket,
+            {
+                "status": TicketStatus.SEND_UNKNOWN,
+                "locked_until": None,
+                "last_error": error,
+            },
+        )
+
+    async def _finish_send(self, ticket: ClaimedSend, values: dict[str, Any]) -> bool:
         return await self._finish(
             ticket.id,
             TicketStatus.SENDING,
@@ -452,7 +469,7 @@ class TicketRepositoryImpl(TicketRepository):
             .where(
                 TicketEvent.id == ticket_id, TicketEvent.status == stage, same_attempt
             )
-            .values(**values)
+            .values(values)
             .returning(TicketEvent.id)
         )
         updated = row.first() is not None
