@@ -9,7 +9,13 @@ from core.dependencies import get_settings
 from knowledge_base.exceptions import KbArticleNotFoundError
 from knowledge_base.models import KbArticle
 from knowledge_base.repository import APOSTROPHES, KbRepository, get_kb_repository
-from knowledge_base.schemas import MAX_SLUG_LENGTH, SLUG_PATTERN, ArticleScore, KbMatch
+from knowledge_base.schemas import (
+    MAX_SLUG_LENGTH,
+    SLUG_PATTERN,
+    ArticleScore,
+    KbMatch,
+    ParsedArticle,
+)
 
 MAX_WORDS = 100
 MIN_WORD_LENGTH = 3
@@ -67,6 +73,18 @@ class KbService:
         matches = [self._to_match(item) for item in relevant]
         matches.sort(key=lambda match: match.score, reverse=True)
         return matches[:RESULT_LIMIT]
+
+    async def find_articles(self, query: str) -> list[ParsedArticle]:
+        articles = []
+        for match in await self.search(query):
+            article = await self._repository.get_by_slug(match.slug)
+            if article is not None:
+                articles.append(
+                    ParsedArticle(
+                        slug=article.slug, title=article.title, body=article.body
+                    )
+                )
+        return articles
 
     def _is_relevant(self, item: ArticleScore) -> bool:
         # A long ticket dilutes the mean word similarity, so an article also
