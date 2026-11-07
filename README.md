@@ -8,6 +8,31 @@ This is a test task, built with AI coding agents. Read how the work is organised
 
 All slices S0-S7 are built and merged (SPEC §13): the idempotent webhook `POST /webhooks/helpdesk` and `GET /api/stats`; the knowledge base (8 Ukrainian articles, search by text, `GET /api/kb/{slug}`); the LLM gateway (rate limit, daily cap, keyless mode); the generation worker; the operator UI to approve or reject drafts; the send path with `send_unknown`, **Mark delivered** and **Resend**; the mock helpdesk with chaos modes; and the load simulator. The production stack is `docker-compose.prod.yml` (see "Deploy on a VDS"). The measured runs are in [`docs/REPORT.md`](docs/REPORT.md). Cut on purpose: JSON logs and HTTPS (DECISIONS, S9).
 
+## Public deployment
+
+A running instance, plain HTTP, without an API key (keyless mode):
+
+| What | Where |
+|---|---|
+| Webhook | `POST http://204.168.225.127/webhooks/helpdesk` |
+| Operator UI (login `admin`, the password is sent to the reviewer separately) | http://204.168.225.127/ |
+| Health check | http://204.168.225.127/health |
+| Public KB article | http://204.168.225.127/kb/reset-password |
+
+To see the whole loop, send an event whose `reply_url` points at the demo helpdesk running next to the service, wait 5 to 30 seconds, then open the ticket in the UI and approve the draft; it ends as `sent`:
+
+```bash
+curl -s -X POST http://204.168.225.127/webhooks/helpdesk -H 'content-type: application/json' -d '{
+  "event_id": "evt_demo_1",
+  "ticket_id": "T-9001",
+  "customer_email": "user@example.com",
+  "message": "Не можу експортувати звіт у PDF",
+  "reply_url": "http://mock-helpdesk:8000/tickets/T-9001/replies"
+}'
+```
+
+A `reply_url` on any other host is called for real, and one that resolves to a private address is refused (SPEC §9). The webhook is limited to 10 requests a second per address (HTTP `429` above that).
+
 ## Run
 
 Requirements: Docker with Compose. No configuration is needed. Compose starts PostgreSQL, the backend (it runs the migrations and loads the KB), the `worker` that drafts replies, and nginx with the operator UI.
