@@ -1,0 +1,83 @@
+name: helpdesk-ai-drafts-prod
+
+# Production stack: nothing here falls back to a default secret, and only nginx is
+# published. Values come from a .env next to this file (see .env.example).
+services:
+  db:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD in .env}
+      POSTGRES_DB: helpdesk
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d helpdesk"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build: ./backend
+    restart: unless-stopped
+    environment:
+      APP_ENV: production
+      DATABASE_URL: postgresql+asyncpg://postgres:${DB_PASSWORD:?set DB_PASSWORD in .env}@db:5432/helpdesk
+      OPERATOR_USER: ${OPERATOR_USER:?set OPERATOR_USER in .env}
+      OPERATOR_PASSWORD: ${OPERATOR_PASSWORD:?set OPERATOR_PASSWORD in .env}
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  worker:
+    build: ./backend
+    restart: unless-stopped
+    command: ["python", "-m", "workers"]
+    environment:
+      DATABASE_URL: postgresql+asyncpg://postgres:${DB_PASSWORD:?set DB_PASSWORD in .env}@db:5432/helpdesk
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      LLM_MODEL: ${LLM_MODEL:-claude-haiku-5-5}
+      LLM_RATE_LIMIT_PER_MINUTE: ${LLM_RATE_LIMIT_PER_MINUTE:-55}
+      LLM_DAILY_CALL_CAP: ${LLM_DAILY_CALL_CAP:-500}
+      LLM_REQUEST_TIMEOUT_S: ${LLM_REQUEST_TIMEOUT_S:-45.0}
+      LLM_CONCURRENCY: ${LLM_CONCURRENCY:-20}
+      KEYLESS_DELAY_MIN_S: ${KEYLESS_DELAY_MIN_S:-5.0}
+      KEYLESS_DELAY_MAX_S: ${KEYLESS_DELAY_MAX_S:-30.0}
+      KB_MIN_SCORE: ${KB_MIN_SCORE:-0.4}
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:?set PUBLIC_BASE_URL in .env, for example http://203.0.113.10}
+      SEND_CONCURRENCY: ${SEND_CONCURRENCY:-10}
+      SEND_RETRY_AMBIGUOUS: ${SEND_RETRY_AMBIGUOUS:-false}
+      # Empty: a reply_url that resolves to a private address is refused. The demo
+      # mock needs REPLY_URL_ALLOWED_HOSTS=mock-helpdesk, set it only for a demo.
+      REPLY_URL_ALLOWED_HOSTS: ${REPLY_URL_ALLOWED_HOSTS:-}
+    depends_on:
+      backend:
+        condition: service_healthy
+
+  # A receiver for demo replies: `docker compose -f docker-compose.prod.yml --profile demo up -d`.
+  mock-helpdesk:
+    build: ./tools
+    profiles: ["demo"]
+    restart: unless-stopped
+
+  frontend:
+    build: ./frontend
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "80:80"
+
+volumes:
+  db_data:

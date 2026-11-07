@@ -109,6 +109,31 @@ docker compose run --rm simulator --events 500 --duration 600 --approve
 
 Options: `--events`, `--duration` (seconds), `--duplicate-rate` and `--concurrent-duplicates` (that share of events is sent as several simultaneous copies), `--approve` (approve this run's drafts so they are sent), `--seed`, `--json <file>` (or `--json -`, the form that works inside the container: the JSON goes to stdout and the readable text to stderr, so it can be piped to `jq`). It prints webhook latency, the answers (`accepted` exactly once per event), the time until the queue drained, final status counts and the deliveries counted by the mock, and exits with status 1 if an event was accepted twice or never, the queue did not drain (unless `--drain-timeout 0`), the mock stored a reply twice or its counts are missing. Transient errors while polling the backend are counted by kind and the run continues; a `401` or `403` from the operator API (wrong `OPERATOR_PASSWORD`) stops it at once. It resets the mock's counts, so use a fresh database (`docker compose down -v` first) for numbers you want to keep. Results of the measured run are in [`docs/REPORT.md`](docs/REPORT.md).
 
+## Deploy on a VDS
+
+`docker-compose.prod.yml` is the production stack: the same services, but `APP_ENV=production`, no default secrets (compose refuses to start until they are set), only nginx published (port 80), the database and backend reachable inside the compose network only, and `restart: unless-stopped`.
+
+1. Create an Ubuntu server, add your SSH key, note the public IP.
+2. Install Docker: `curl -fsSL https://get.docker.com | sh`
+3. Clone the repository and create the settings:
+   ```bash
+   git clone <repo-url> && cd helpdesk-ai-drafts
+   cp .env.example .env
+   # set DB_PASSWORD (letters and digits), OPERATOR_USER, OPERATOR_PASSWORD (not the
+   # defaults) and PUBLIC_BASE_URL=http://<server-ip>; optionally ANTHROPIC_API_KEY
+   # together with LLM_DAILY_CALL_CAP
+   ```
+4. Start it and open port 80:
+   ```bash
+   docker compose -f docker-compose.prod.yml up -d --build
+   ufw allow 80          # or open port 80 in the Hetzner firewall
+   ```
+5. Visit `http://<server-ip>/` (operator login from `.env`) and check `http://<server-ip>/health`.
+
+The stack runs without `ANTHROPIC_API_KEY` in keyless mode (I8). The public webhook is `POST http://<server-ip>/webhooks/helpdesk`; replies go to the `reply_url` of each event, and a `reply_url` that resolves to a private address is refused. To try the full loop on the server, start the demo receiver with `REPLY_URL_ALLOWED_HOSTS=mock-helpdesk` in `.env` and `docker compose -f docker-compose.prod.yml --profile demo up -d`, and use `http://mock-helpdesk:8000/tickets/<id>/replies` as `reply_url`.
+
+There is no TLS: the operator's Basic Auth password travels in clear text over HTTP (DECISIONS, S9). Use a strong password, and put the stack behind HTTPS before real use.
+
 ## Develop
 
 Requirements: [uv](https://docs.astral.sh/uv/).
