@@ -143,12 +143,14 @@ Transient generation failures return a row to `received`, and definite send fail
 - Classify the outcome:
   - `201` -> `sent`.
   - **Definite failure** (nothing was delivered): connection or DNS error before the request is sent, or an HTTP `5xx` -> retry with backoff, up to the attempt cap, then `send_failed`.
-  - Other `4xx` -> `send_failed` (terminal, no retry).
-  - **Ambiguous** (the request may have reached the helpdesk): read timeout, connection dropped after sending, or a row left in `sending` after its lease expired (worker crash) -> `send_unknown`. No automatic retry.
+  - `408` and `429` -> retry with backoff like `5xx` (the helpdesk did not process the request).
+  - Other `3xx` and `4xx` -> `send_failed` (terminal, no retry; redirects are never followed).
+  - Another `2xx` (`200`, `202`, `204`) -> `send_unknown`: the helpdesk may have stored the reply.
+  - **Ambiguous** (the request may have reached the helpdesk): read or write timeout, a read or write error, a connection dropped after sending, or a row left in `sending` after its lease expired (worker crash) -> `send_unknown`. No automatic retry.
 - The operator resolves `send_unknown` with **Mark delivered** (-> `sent`) or **Resend** (-> `approved`, a conscious choice).
 - `SEND_RETRY_AMBIGUOUS=true` (default `false`) retries ambiguous outcomes too. It is meant for receivers known to honor the `Idempotency-Key`, such as our mock.
 - **Guarantee, stated honestly.** Exactly-once delivery is impossible over HTTP when the outcome of a request is unknown. The service chooses at-most-once for ambiguous cases: it prefers one extra operator click to a duplicate reply. The cost is manual work proportional to the timeout rate (about 25 of 500 tickets at a 5% timeout rate).
-- `reply_url` is untrusted input (SSRF). At send time the host is resolved and the send is refused (`send_failed`) if it points to a private, loopback or link-local address, unless the host is in `REPLY_URL_ALLOWED_HOSTS` (compose sets `mock-helpdesk`). The webhook accepts any `reply_url`, so the sample payload is never rejected.
+- `reply_url` is untrusted input (SSRF). At send time the host is resolved and the send is refused (`send_failed`) if any of its addresses is not public (private, loopback, link-local, shared, reserved, multicast), unless the host is in `REPLY_URL_ALLOWED_HOSTS` (compose sets `mock-helpdesk`). The request then goes to the checked address with the original `Host` header and TLS server name, so a second DNS answer cannot redirect it (DNS rebinding). Only `http` and `https` are accepted. A host that does not resolve is a definite failure and is retried. The webhook accepts any `reply_url`, so the sample payload is never rejected.
 
 ## 10. Operator UI
 
