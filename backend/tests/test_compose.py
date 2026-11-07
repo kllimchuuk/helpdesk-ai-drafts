@@ -8,7 +8,9 @@ from config import Settings
 
 COMPOSE_FILE = Path(__file__).resolve().parents[2] / "docker-compose.yml"
 INTERPOLATION = re.compile(r"\$\{(?P<name>\w+):-(?P<default>[^}]*)\}")
-WORKER_PREFIXES = ("LLM_", "KEYLESS_")
+WORKER_PREFIXES = ("LLM_", "KEYLESS_", "SEND_", "REPLY_URL_")
+# Compose points the worker at its own mock helpdesk on the private network.
+COMPOSE_DEFAULTS = {"REPLY_URL_ALLOWED_HOSTS": "mock-helpdesk"}
 WORKER_EXTRAS = ("ANTHROPIC_API_KEY", "KB_MIN_SCORE", "PUBLIC_BASE_URL")
 
 
@@ -26,9 +28,13 @@ def worker_environment() -> dict[str, str]:
 
 
 def default_text(name: str) -> str:
+    if name in COMPOSE_DEFAULTS:
+        return COMPOSE_DEFAULTS[name]
     value = Settings.model_fields[name].default
     if hasattr(value, "get_secret_value"):
         return value.get_secret_value()
+    if isinstance(value, bool):
+        return str(value).lower()
     return str(value)
 
 

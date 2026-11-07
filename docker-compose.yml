@@ -54,6 +54,10 @@ services:
       KEYLESS_DELAY_MAX_S: ${KEYLESS_DELAY_MAX_S:-30.0}
       KB_MIN_SCORE: ${KB_MIN_SCORE:-0.4}
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:8080}
+      SEND_CONCURRENCY: ${SEND_CONCURRENCY:-10}
+      SEND_RETRY_AMBIGUOUS: ${SEND_RETRY_AMBIGUOUS:-false}
+      # Compose's own helpdesk mock lives on the private network; nothing else may.
+      REPLY_URL_ALLOWED_HOSTS: ${REPLY_URL_ALLOWED_HOSTS:-mock-helpdesk}
     depends_on:
       # The backend runs the migrations and loads the KB before it is healthy.
       backend:

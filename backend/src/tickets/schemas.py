@@ -19,6 +19,16 @@ class ClaimedTicket:
     attempt: int
 
 
+@dataclass(frozen=True)
+class ClaimedSend:
+    id: uuid.UUID
+    event_id: str
+    ticket_id: str
+    reply_url: str
+    reply: str | None
+    attempt: int
+
+
 class DraftSourceResponse(BaseModel):
     slug: str
     title: str

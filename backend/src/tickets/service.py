@@ -41,11 +41,26 @@ class TicketService:
     async def reject(self, ticket_id: str) -> TicketDetail:
         return await self._review(ticket_id, TicketStatus.REJECTED)
 
+    async def mark_delivered(self, ticket_id: str) -> TicketDetail:
+        row = await self._repository.resolve_unknown(
+            parse_id(ticket_id), TicketStatus.SENT
+        )
+        return await self._result(ticket_id, row)
+
+    async def resend(self, ticket_id: str) -> TicketDetail:
+        row = await self._repository.resolve_unknown(
+            parse_id(ticket_id), TicketStatus.APPROVED
+        )
+        return await self._result(ticket_id, row)
+
     async def _review(self, ticket_id: str, decision: TicketStatus) -> TicketDetail:
         row = await self._repository.review(parse_id(ticket_id), decision)
+        return await self._result(ticket_id, row)
+
+    async def _result(self, ticket_id: str, row: TicketEvent | None) -> TicketDetail:
         if row is None:
-            # Never retried: a miss that now reads `draft_ready` means the request
-            # was sent before the draft existed, so nobody has read that draft.
+            # Never retried: a miss means the ticket changed after the operator
+            # looked at it (for a review it may be a draft nobody has read yet).
             current = await self._load(ticket_id)
             raise TicketStatusConflictError(current.status)
         return TicketDetail.model_validate(row)

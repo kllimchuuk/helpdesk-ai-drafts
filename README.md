@@ -6,7 +6,7 @@ This is a test task, built with AI coding agents. Read how the work is organised
 
 ## Status
 
-Work proceeds in slices (SPEC §13). Done so far: project skeleton with `/health`, Docker Compose and a placeholder page; the `ticket_events` schema with Alembic migrations; the idempotent webhook `POST /webhooks/helpdesk`; `GET /api/stats`; the knowledge base (8 Ukrainian articles, search by text, `GET /api/kb/{slug}`); the LLM gateway (rate limit, daily cap, keyless mode); the generation worker that turns every new ticket into a draft; and the operator UI to approve or reject drafts. The send path with the mock helpdesk and the simulator are still to come, so this file will grow with them.
+Work proceeds in slices (SPEC §13). Done so far: project skeleton with `/health`, Docker Compose and a placeholder page; the `ticket_events` schema with Alembic migrations; the idempotent webhook `POST /webhooks/helpdesk`; `GET /api/stats`; the knowledge base (8 Ukrainian articles, search by text, `GET /api/kb/{slug}`); the LLM gateway (rate limit, daily cap, keyless mode); the generation worker that turns every new ticket into a draft; the operator UI to approve or reject drafts; and the send path that delivers approved replies. The mock helpdesk and the simulator are still to come, so this file will grow with them.
 
 ## Run
 
@@ -86,6 +86,12 @@ curl -s -u operator:operator -X POST -H 'X-Requested-By: operator-ui' \
   -H 'Content-Type: application/json' -d '{}' \
   http://localhost:8080/api/tickets/<id>/approve
 ```
+
+## Sending replies
+
+The worker also sends approved replies to the ticket's `reply_url` with the header `Idempotency-Key: <ticket id>`. Only `201` counts as delivered. A failure that certainly happened before the request left (connection refused, unknown host) or a `5xx`, `408` or `429` is retried with backoff up to 8 attempts, then `send_failed`; another `3xx` or `4xx` fails at once. When the request may have reached the helpdesk (a timeout after sending, a dropped connection, a worker that died mid-send, another `2xx`), the ticket becomes `send_unknown` and is never resent automatically: the operator checks the helpdesk and clicks **Mark delivered** or **Resend**. This trades one extra click for never sending a customer the same reply twice. `SEND_RETRY_AMBIGUOUS=true` retries those cases too, for receivers that honour the idempotency key.
+
+`reply_url` comes from the webhook body, so it is untrusted: the host is resolved once, every address must be public (unless the host is in `REPLY_URL_ALLOWED_HOSTS`), the request goes to that checked address with the original `Host` header and TLS name, and redirects are never followed.
 
 ## Develop
 
