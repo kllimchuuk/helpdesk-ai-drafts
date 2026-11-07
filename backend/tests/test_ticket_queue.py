@@ -259,7 +259,7 @@ async def test_an_expired_send_becomes_unknown_and_is_not_claimed_again(
 
     async with session_factory() as session:
         expired = await TicketRepositoryImpl(session).expire_stale_sends(
-            retry_ambiguous=False
+            retry_ambiguous=False, max_attempts=8
         )
 
     row = await load(session_factory, send.id)
@@ -278,7 +278,9 @@ async def test_an_expired_send_is_requeued_when_ambiguity_may_retry(
     await expire_leases(session_factory)
 
     async with session_factory() as session:
-        await TicketRepositoryImpl(session).expire_stale_sends(retry_ambiguous=True)
+        await TicketRepositoryImpl(session).expire_stale_sends(
+            retry_ambiguous=True, max_attempts=8
+        )
 
     [again] = await claim_sends(session_factory)
     assert again.attempt == 2
@@ -293,7 +295,7 @@ async def test_a_live_send_is_not_expired(
 
     async with session_factory() as session:
         expired = await TicketRepositoryImpl(session).expire_stale_sends(
-            retry_ambiguous=False
+            retry_ambiguous=False, max_attempts=8
         )
 
     assert expired == 0
@@ -308,7 +310,9 @@ async def test_a_stale_sender_cannot_overwrite_the_new_attempt(
     [stale] = await claim_sends(session_factory)
     await expire_leases(session_factory)
     async with session_factory() as session:
-        await TicketRepositoryImpl(session).expire_stale_sends(retry_ambiguous=True)
+        await TicketRepositoryImpl(session).expire_stale_sends(
+            retry_ambiguous=True, max_attempts=8
+        )
     [current] = await claim_sends(session_factory)
 
     async with session_factory() as session:
@@ -326,3 +330,20 @@ async def test_a_stale_sender_cannot_overwrite_the_new_attempt(
     row = await load(session_factory, current.id)
     assert row.status == TicketStatus.SENT
     assert row.sent_at is not None
+
+
+async def test_an_expired_send_at_the_cap_is_parked_even_when_ambiguity_may_retry(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    await insert_events(session_factory, 1)
+    await approve_all(session_factory)
+    [send] = await claim_sends(session_factory)
+    await expire_leases(session_factory)
+
+    async with session_factory() as session:
+        await TicketRepositoryImpl(session).expire_stale_sends(
+            retry_ambiguous=True, max_attempts=1
+        )
+
+    assert (await load(session_factory, send.id)).status == TicketStatus.SEND_UNKNOWN
+    assert await claim_sends(session_factory) == []

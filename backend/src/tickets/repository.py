@@ -4,7 +4,7 @@ from datetime import timedelta
 from typing import Annotated, Any
 
 from fastapi import Depends
-from sqlalchemy import ColumnElement, func, or_, select, update
+from sqlalchemy import ColumnElement, case, func, literal, or_, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -64,7 +64,9 @@ class TicketRepository(ABC):
         raise NotImplementedError()
 
     @abstractmethod
-    async def expire_stale_sends(self, *, retry_ambiguous: bool) -> int:
+    async def expire_stale_sends(
+        self, *, retry_ambiguous: bool, max_attempts: int
+    ) -> int:
         """Settle `sending` rows whose worker died; returns how many."""
         raise NotImplementedError()
 
@@ -371,11 +373,23 @@ class TicketRepositoryImpl(TicketRepository):
         return claimed
 
     @translate_unavailable
-    async def expire_stale_sends(self, *, retry_ambiguous: bool) -> int:
+    async def expire_stale_sends(
+        self, *, retry_ambiguous: bool, max_attempts: int
+    ) -> int:
         # A `sending` row whose lease expired belongs to a worker that died during
         # the request, which may have reached the helpdesk: it is never put back
-        # in the queue unless ambiguous outcomes are allowed to retry (I6).
-        status = TicketStatus.APPROVED if retry_ambiguous else TicketStatus.SEND_UNKNOWN
+        # in the queue unless ambiguous outcomes are allowed to retry (I6), and
+        # then only below the attempt cap, so a send that keeps killing its
+        # worker stops.
+        status: Any = TicketStatus.SEND_UNKNOWN
+        if retry_ambiguous:
+            status = case(
+                (
+                    TicketEvent.send_attempts < max_attempts,
+                    literal(TicketStatus.APPROVED.value),
+                ),
+                else_=literal(TicketStatus.SEND_UNKNOWN.value),
+            )
         rows = await self._session.execute(
             update(TicketEvent)
             .where(

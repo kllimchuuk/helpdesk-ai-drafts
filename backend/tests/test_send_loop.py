@@ -5,18 +5,20 @@ import uuid
 from collections import Counter
 from collections.abc import Callable
 from dataclasses import replace
+from datetime import timedelta
 
 import httpx
 from httpx import AsyncClient
-from sqlalchemy import select, text, update
+from sqlalchemy import func, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from delivery.helpdesk_client import HelpdeskClient, build_http_client
 from tests.fakes import FakeHelpdesk, resolve_to
 from tests.helpers import sample_event
 from tickets.models import TicketEvent
+from tickets.repository import STALE_SEND_ERROR
 from tickets.status import TicketStatus
-from workers.send_loop import INTERNAL_ERROR, SENDS_EXHAUSTED, SendLoop, SendPolicy
+from workers.send_loop import INTERNAL_ERROR, SendLoop, SendPolicy
 
 PUBLIC_IP = "93.184.216.34"
 FAST = SendPolicy(
@@ -385,14 +387,18 @@ async def test_resend_puts_an_unknown_reply_back_in_the_queue(
     assert len(helpdesk.requests) == 1
 
 
-async def test_a_send_that_outlived_every_attempt_is_not_sent_again(
+async def test_a_crashed_send_at_the_cap_is_not_requeued_even_when_ambiguity_may_retry(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
-    """Even when ambiguity may retry, the attempt cap still stops a crashing send."""
+    """A send that keeps killing its worker stops at the attempt cap."""
     await approved_tickets(session_factory)
     async with session_factory() as session:
         await session.execute(
-            update(TicketEvent).values(send_attempts=FAST.max_attempts)
+            update(TicketEvent).values(
+                status=TicketStatus.SENDING,
+                send_attempts=FAST.max_attempts,
+                locked_until=func.now() - timedelta(seconds=1),
+            )
         )
         await session.commit()
     helpdesk = FakeHelpdesk()
@@ -401,8 +407,29 @@ async def test_a_send_that_outlived_every_attempt_is_not_sent_again(
     [row] = await run_to_end(session_factory, helpdesk, policy)
 
     assert row.status == TicketStatus.SEND_UNKNOWN
-    assert row.last_error == SENDS_EXHAUSTED
+    assert row.last_error == STALE_SEND_ERROR
     assert helpdesk.requests == []
+
+
+async def test_resend_after_the_cap_gets_one_more_attempt(
+    db_client: AsyncClient, session_factory: async_sessionmaker[AsyncSession]
+) -> None:
+    [ticket_id] = await approved_tickets(session_factory)
+    async with session_factory() as session:
+        await session.execute(
+            update(TicketEvent).values(
+                status=TicketStatus.SEND_UNKNOWN, send_attempts=FAST.max_attempts
+            )
+        )
+        await session.commit()
+
+    response = await db_client.post(f"/api/tickets/{ticket_id}/resend", **OPERATOR)
+    helpdesk = FakeHelpdesk()
+    [row] = await run_to_end(session_factory, helpdesk)
+
+    assert response.status_code == 200
+    assert row.status == TicketStatus.SENT
+    assert len(helpdesk.requests) == 1
 
 
 async def test_an_ambiguous_last_attempt_stays_unknown_when_ambiguity_may_retry(
