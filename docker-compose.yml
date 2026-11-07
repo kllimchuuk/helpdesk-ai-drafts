@@ -45,9 +45,15 @@ services:
     environment:
       DATABASE_URL: postgresql+asyncpg://postgres:postgres@db:5432/helpdesk
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      LLM_MODEL: ${LLM_MODEL:-claude-haiku-5-5}
+      LLM_RATE_LIMIT_PER_MINUTE: ${LLM_RATE_LIMIT_PER_MINUTE:-55}
       LLM_DAILY_CALL_CAP: ${LLM_DAILY_CALL_CAP:-500}
-      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:8080}
+      LLM_REQUEST_TIMEOUT_S: ${LLM_REQUEST_TIMEOUT_S:-45.0}
       LLM_CONCURRENCY: ${LLM_CONCURRENCY:-20}
+      KEYLESS_DELAY_MIN_S: ${KEYLESS_DELAY_MIN_S:-5.0}
+      KEYLESS_DELAY_MAX_S: ${KEYLESS_DELAY_MAX_S:-30.0}
+      KB_MIN_SCORE: ${KB_MIN_SCORE:-0.4}
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:8080}
     depends_on:
       # The backend runs the migrations and loads the KB before it is healthy.
       backend:
