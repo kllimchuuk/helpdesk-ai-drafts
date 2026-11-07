@@ -152,4 +152,4 @@ cd ../tools && uv sync && uv run pytest && uv run ruff check .
 
 The tests need the compose `db` service; they create and drop their own `helpdesk_test` database and never touch `helpdesk`. `DATABASE_URL` above points the backend at the published port of the compose database (inside compose the host is `db`).
 
-Environment variables are listed in [`.env.example`](.env.example); all of them are optional.
+Environment variables are listed in [`.env.example`](.env.example); locally all of them are optional, production needs the first four.
