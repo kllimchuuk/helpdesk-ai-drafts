@@ -6,7 +6,7 @@ This is a test task, built with AI coding agents. Read how the work is organised
 
 ## Status
 
-Work proceeds in slices (SPEC §13). Done so far: project skeleton with `/health`, Docker Compose and a placeholder page; the `ticket_events` schema with Alembic migrations; the idempotent webhook `POST /webhooks/helpdesk`; `GET /api/stats`; the knowledge base (8 Ukrainian articles, search by text, `GET /api/kb/{slug}`); the LLM gateway (rate limit, daily cap, keyless mode); the generation worker that turns every new ticket into a draft; the operator UI to approve or reject drafts; and the send path that delivers approved replies. The measured run is in `docs/REPORT.md`, so this file will grow with them.
+All slices S0-S7 are built and merged (SPEC §13): the idempotent webhook `POST /webhooks/helpdesk` and `GET /api/stats`; the knowledge base (8 Ukrainian articles, search by text, `GET /api/kb/{slug}`); the LLM gateway (rate limit, daily cap, keyless mode); the generation worker; the operator UI to approve or reject drafts; the send path with `send_unknown`, **Mark delivered** and **Resend**; the mock helpdesk with chaos modes; and the load simulator. The production stack is `docker-compose.prod.yml` (see "Deploy on a VDS"). The measured runs are in [`docs/REPORT.md`](docs/REPORT.md). Cut on purpose: JSON logs and HTTPS (DECISIONS, S9).
 
 ## Run
 
