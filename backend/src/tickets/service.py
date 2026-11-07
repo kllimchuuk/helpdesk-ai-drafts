@@ -60,8 +60,6 @@ class TicketService:
 
     async def _result(self, ticket_id: str, row: TicketEvent | None) -> TicketDetail:
         if row is None:
-            # Never retried: a miss means the ticket changed after the operator
-            # looked at it (for a review it may be a draft nobody has read yet).
             current = await self._load(ticket_id)
             raise TicketStatusConflictError(current.status)
         return TicketDetail.model_validate(row)

@@ -156,8 +156,6 @@ class TicketRepositoryImpl(TicketRepository):
             .returning(TicketEvent.id)
         )
         inserted = (await self._session.execute(statement)).first() is not None
-        # The webhook acknowledgement must follow a durable write, so commit here
-        # instead of relying on get_db to commit after the response is built.
         await self._session.commit()
         return inserted
 
@@ -227,8 +225,6 @@ class TicketRepositoryImpl(TicketRepository):
     async def _operator_transition(
         self, ticket_id: uuid.UUID, expected: TicketStatus, values: dict[str, Any]
     ) -> TicketEvent | None:
-        # One conditional UPDATE: of any number of simultaneous clicks only the
-        # first finds the row in the expected status, so it changes once (I7).
         row = await self._session.scalar(
             update(TicketEvent)
             .where(TicketEvent.id == ticket_id, TicketEvent.status == expected)
@@ -258,8 +254,6 @@ class TicketRepositoryImpl(TicketRepository):
             .limit(limit)
             .with_for_update(skip_locked=True)
         )
-        # A `generating` row with an expired lease belongs to a worker that died;
-        # taking it again bumps the attempt, which also fences the dead worker out.
         rows = await self._session.scalars(
             update(TicketEvent)
             .where(TicketEvent.id.in_(due.scalar_subquery()))
@@ -381,8 +375,6 @@ class TicketRepositoryImpl(TicketRepository):
     async def _settle_stale_sends(
         self, status: TicketStatus, error: str, condition: ColumnElement[bool]
     ) -> int:
-        # A `sending` row whose lease expired belongs to a worker that died during
-        # the request; one conditional UPDATE moves each such row exactly once.
         rows = await self._session.execute(
             update(TicketEvent)
             .where(
@@ -462,8 +454,6 @@ class TicketRepositoryImpl(TicketRepository):
         same_attempt: ColumnElement[bool],
         values: dict[str, Any],
     ) -> bool:
-        # Compare-and-set on the attempt: a worker whose lease expired and was
-        # taken over cannot overwrite what the new owner writes.
         row = await self._session.execute(
             update(TicketEvent)
             .where(

@@ -40,7 +40,6 @@ class DraftOutput(BaseModel):
     @field_validator("reply", "cited_slugs")
     @classmethod
     def has_no_nul(cls, value: str | list[str]) -> str | list[str]:
-        # PostgreSQL text cannot store NUL, so such a draft could never be saved.
         texts = [value] if isinstance(value, str) else value
         if any("\x00" in text for text in texts):
             raise ValueError("NUL characters are not allowed")

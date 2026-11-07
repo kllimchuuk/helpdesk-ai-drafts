@@ -22,7 +22,6 @@ MESSAGES = (
 OPERATOR_HEADERS = {"X-Requested-By": "operator-ui", "Content-Type": "application/json"}
 POLL_SECONDS = 1.0
 POLL_ERRORS = (httpx.HTTPError, ValueError, KeyError)
-# Wrong operator credentials or a missing CSRF header never fix themselves.
 FATAL_STATUSES = (401, 403)
 
 
@@ -96,8 +95,6 @@ async def send_events(
         if delay > 0:
             await asyncio.sleep(delay)
         if report.fatal:
-            # Every further webhook would cost a provider call for a draft that
-            # can never be approved.
             break
         event = build_event(run_id, index, options, rng.choice)
         copies = copies_for(rng.random(), options)
@@ -126,7 +123,6 @@ async def approve_drafts(
             report.fatal = str(error)
             return
         except POLL_ERRORS as error:
-            # A restarting or overloaded backend must not end the run.
             report.poll_errors[error_kind(error)] += 1
         try:
             await asyncio.wait_for(stop.wait(), timeout=POLL_SECONDS)
@@ -146,7 +142,6 @@ async def approve_once(
         raise FatalRunError(f"operator API answered {response.status_code}")
     response.raise_for_status()
     for ticket in response.json()["items"]:
-        # Only this run's tickets: the database may hold the owner's real drafts.
         if not ticket["ticket_id"].startswith(prefix):
             continue
         approved = await http.post(

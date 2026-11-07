@@ -85,8 +85,6 @@ class KbRepositoryImpl(KbRepository):
     @translate_unavailable
     async def replace_all(self, articles: list[ParsedArticle]) -> None:
         statement = insert(KbArticle).values(ARTICLES.dump_python(articles))
-        # One statement in the caller's slug order: containers syncing together
-        # take row locks in the same order and cannot deadlock.
         stored = await self._session.execute(
             statement.on_conflict_do_update(
                 index_elements=[KbArticle.slug],

@@ -230,8 +230,6 @@ async def test_an_unexpected_error_is_retried_and_does_not_stop_the_loop(
 ) -> None:
     await insert_events(session_factory, 2)
     llm = FakeLLMClient(RuntimeError("bug"))
-    # A lease far longer than the wait: only the explicit retry can bring the
-    # ticket back in time, not the expiry of a crashed task's lease.
     policy = replace(FAST, lease_seconds=600.0)
 
     found = await run_to_end(session_factory, llm, policy)

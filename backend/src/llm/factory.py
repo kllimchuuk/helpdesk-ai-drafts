@@ -54,7 +54,6 @@ def build_llm_client(
 def build_sdk(
     api_key: str, settings: Settings, http_client: httpx2.AsyncClient | None
 ) -> AsyncAnthropic:
-    # The SDK's own retries would be provider calls the limiter never counted.
     return AsyncAnthropic(
         api_key=api_key,
         max_retries=0,

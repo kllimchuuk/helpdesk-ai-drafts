@@ -90,8 +90,6 @@ class KbService:
         return articles
 
     def _is_relevant(self, item: ArticleScore) -> bool:
-        # A long ticket dilutes the mean word similarity, so an article also
-        # counts when several of the words match it strongly.
         return (
             self._score(item) >= self._min_score
             or item.strong_words >= MIN_STRONG_WORDS

@@ -47,9 +47,6 @@ class SendLoop(QueueLoop[ClaimedSend]):
     async def _claim_batch(
         self, tickets: TicketRepository, limit: int
     ) -> list[ClaimedSend]:
-        # A send whose worker died may have reached the helpdesk, so it is parked
-        # for the operator unless ambiguous outcomes may retry (I6), and then only
-        # below the attempt cap, so a send that keeps killing its worker stops.
         if self._policy.retry_ambiguous:
             await tickets.requeue_stale_sends(
                 max_attempts=self._policy.max_attempts, error=STALE_SEND_ERROR
@@ -70,7 +67,6 @@ class SendLoop(QueueLoop[ClaimedSend]):
                 idempotency_key=str(ticket.id),
             )
         except Exception:
-            # Whatever broke may have done so after the request left: ambiguous.
             log(logging.ERROR, "Sending failed unexpectedly", ticket, exc_info=True)
             outcome = SendOutcome(SendResult.UNKNOWN, INTERNAL_ERROR)
         await self._settle(ticket, outcome)
@@ -79,8 +75,6 @@ class SendLoop(QueueLoop[ClaimedSend]):
         result = outcome.result
         exhausted = ticket.attempt >= self._policy.max_attempts
         if result == SendResult.UNKNOWN and self._policy.retry_ambiguous:
-            # Out of attempts it stays unknown: send_failed would tell the operator
-            # that a reply which may have arrived certainly did not.
             result = SendResult.UNKNOWN if exhausted else SendResult.RETRY
         if result == SendResult.RETRY and exhausted:
             result = SendResult.FAILED

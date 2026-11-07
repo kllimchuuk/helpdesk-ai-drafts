@@ -61,7 +61,7 @@ A new dependency needs an entry in `docs/DECISIONS.md` first. Not used on purpos
 - No database transaction is open during a provider or helpdesk call.
 - Domain errors subclass `AppException(code, message, payload)`.
 - Settings have defaults so `docker compose up` works with no `.env`.
-- Type hints everywhere. Comments only for a non-obvious reason (why a lock or lease exists); no comments that restate the code.
+- Type hints everywhere. No comments in Python or JavaScript code (`test_no_comments.py` fails otherwise); the reason for a lock or lease goes to SPEC or DECISIONS. Tool directives such as `# noqa` stay.
 - Tests run against real Postgres (database name ends with `_test`), one `test_<module>.py` per module, fakes in `tests/fakes.py`, no network and no real LLM.
 - Everything in the repository is English, except the Ukrainian KB articles.
 

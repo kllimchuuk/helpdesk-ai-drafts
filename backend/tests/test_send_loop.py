@@ -274,6 +274,14 @@ async def test_no_transaction_is_open_while_the_helpdesk_is_called(
 
     async def count_open_transactions(request: httpx.Request) -> None:
         async with session_factory() as session:
+            probe = await session.execute(
+                text(
+                    "SELECT pid, state, left(query, 160), now() - state_change "
+                    "FROM pg_stat_activity WHERE datname = current_database() "
+                    "AND pid <> pg_backend_pid() AND state LIKE 'idle in transaction%'"
+                )
+            )
+            print("PROBE", [tuple(r) for r in probe])
             observed.append(
                 await session.scalar(
                     text(
@@ -285,7 +293,6 @@ async def test_no_transaction_is_open_while_the_helpdesk_is_called(
                 )
             )
 
-    # One task at a time: other tasks' short commits would show up as well.
     policy = replace(FAST, concurrency=1)
 
     await run_to_end(

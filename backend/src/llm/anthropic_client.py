@@ -46,8 +46,6 @@ class AnthropicProvider(LLMClient):
             failure = LLMInvalidOutputError(type(error).__name__)
         else:
             return to_result(response)
-        # Raised outside the except blocks so no exception context is attached:
-        # the provider's response body and the model's reply can hold customer text.
         raise failure
 
 

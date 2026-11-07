@@ -56,7 +56,6 @@ def parse(argv: list[str] | None = None) -> tuple[Options, str | None]:
 
 
 def emit(summary: dict[str, object], json_path: str | None) -> None:
-    # With JSON on stdout the readable text goes to stderr, so `| jq` works.
     text_stream = sys.stderr if json_path == "-" else sys.stdout
     print(render(summary), file=text_stream)
     if json_path is None:

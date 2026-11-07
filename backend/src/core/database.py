@@ -24,7 +24,6 @@ logger = logging.getLogger(__name__)
 
 UTC_SERVER_SETTINGS = {"timezone": "UTC"}
 
-# SQLSTATE classes 08 (connection exception) and 57 (operator intervention).
 UNAVAILABLE_SQLSTATE_CLASSES = ("08", "57")
 
 
@@ -44,8 +43,6 @@ def build_session_factory(engine: AsyncEngine) -> async_sessionmaker[AsyncSessio
 
 
 def is_unavailable(error: BaseException) -> bool:
-    # asyncpg reports an unreachable server as a bare OSError, not a DBAPIError,
-    # and a connection lost mid-statement as a plain DBAPIError flagged as invalidated.
     if isinstance(
         error, OSError | OperationalError | InterfaceError | PoolTimeoutError
     ):

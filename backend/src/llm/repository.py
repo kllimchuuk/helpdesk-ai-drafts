@@ -9,8 +9,6 @@ from llm.route import LlmRoute
 
 RESERVATION_LOCK_ID = 7_364_892_002
 
-# clock_timestamp() is volatile, so the planner cannot use the called_at index
-# for it directly; wrapped in a subquery it is evaluated once and the index works.
 WINDOW = (
     "called_at > (SELECT clock_timestamp() "
     "- make_interval(secs => CAST(:window AS float8)))"
@@ -59,8 +57,6 @@ class LlmCallRepositoryImpl(LlmCallRepository):
 
     @translate_unavailable
     async def lock_reservations(self) -> None:
-        # Held until commit: concurrent reservations take turns, so the window
-        # count and the insert that follows it cannot interleave across workers.
         await self._session.execute(
             text("SELECT pg_advisory_xact_lock(:key)"), {"key": RESERVATION_LOCK_ID}
         )

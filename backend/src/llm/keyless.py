@@ -39,9 +39,6 @@ class KeylessClient(LLMClient):
             async with asyncio.timeout(delay):
                 await self._probe.complete(request)
         except Exception:
-            # The request exists to behave like the keyed path; whatever comes
-            # back, an authentication error or a broken body, is discarded, and a
-            # hanging connection is cut off when the delay is over.
             pass
         remaining = delay - (self._monotonic() - started)
         if remaining > 0:
