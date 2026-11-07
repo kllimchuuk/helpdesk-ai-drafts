@@ -27,6 +27,7 @@ Available as the slices land (SPEC §13):
 - Run everything: `docker compose up --build`
 - Tests: `cd backend && uv run pytest` (needs the compose `db` service)
 - Lint and format: `cd backend && uv run ruff check . && uv run ruff format --check .`
+- Mock helpdesk tests: `cd tools && uv run pytest && uv run ruff check . && uv run ruff format --check .`
 - Load and duplicate run: `docker compose run --rm simulator --events 500 --duration 600`
 
 ## How we work

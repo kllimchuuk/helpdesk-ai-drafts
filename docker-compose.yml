@@ -63,6 +63,18 @@ services:
       backend:
         condition: service_healthy
 
+  mock-helpdesk:
+    build: ./tools
+    environment:
+      FAIL_5XX_RATE: ${FAIL_5XX_RATE:-0}
+      TIMEOUT_RATE: ${TIMEOUT_RATE:-0}
+      HANG_AFTER_STORE_RATE: ${HANG_AFTER_STORE_RATE:-0}
+      HONOR_IDEMPOTENCY_KEY: ${HONOR_IDEMPOTENCY_KEY:-true}
+      HANG_SECONDS: ${HANG_SECONDS:-60}
+    ports:
+      # Only for reading /_debug/deliveries from the host.
+      - "127.0.0.1:8090:8000"
+
   frontend:
     build: ./frontend
     depends_on:

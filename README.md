@@ -6,7 +6,7 @@ This is a test task, built with AI coding agents. Read how the work is organised
 
 ## Status
 
-Work proceeds in slices (SPEC §13). Done so far: project skeleton with `/health`, Docker Compose and a placeholder page; the `ticket_events` schema with Alembic migrations; the idempotent webhook `POST /webhooks/helpdesk`; `GET /api/stats`; the knowledge base (8 Ukrainian articles, search by text, `GET /api/kb/{slug}`); the LLM gateway (rate limit, daily cap, keyless mode); the generation worker that turns every new ticket into a draft; the operator UI to approve or reject drafts; and the send path that delivers approved replies. The mock helpdesk and the simulator are still to come, so this file will grow with them.
+Work proceeds in slices (SPEC §13). Done so far: project skeleton with `/health`, Docker Compose and a placeholder page; the `ticket_events` schema with Alembic migrations; the idempotent webhook `POST /webhooks/helpdesk`; `GET /api/stats`; the knowledge base (8 Ukrainian articles, search by text, `GET /api/kb/{slug}`); the LLM gateway (rate limit, daily cap, keyless mode); the generation worker that turns every new ticket into a draft; the operator UI to approve or reject drafts; and the send path that delivers approved replies. The simulator is still to come, so this file will grow with them.
 
 ## Run
 
@@ -93,6 +93,12 @@ The worker also sends approved replies to the ticket's `reply_url` with the head
 
 `reply_url` comes from the webhook body, so it is untrusted: the host is resolved once, every address must be public (unless the host is in `REPLY_URL_ALLOWED_HOSTS`), the request goes to that checked address with the original `Host` header and TLS name, and redirects are never followed.
 
+## Mock helpdesk
+
+`tools/mock_helpdesk` (the `mock-helpdesk` service) receives replies at `POST /tickets/{id}/replies`, answers `201` and counts deliveries per `Idempotency-Key`. Put a `reply_url` such as `http://mock-helpdesk:8000/tickets/T-1042/replies` in a webhook to send there; `mock-helpdesk` is the only host allowed to resolve to a private address. Read the counts with `curl -s http://127.0.0.1:8090/_debug/deliveries` and clear them with `curl -s -X POST http://127.0.0.1:8090/_debug/reset`.
+
+Chaos comes from the root `.env`: `FAIL_5XX_RATE`, `TIMEOUT_RATE`, `HANG_AFTER_STORE_RATE` (stores the reply, then never answers in time) and `HONOR_IDEMPOTENCY_KEY=false` (stores every copy, so a duplicate send would show up as `duplicates`). Restart the service after changing them: `docker compose up -d mock-helpdesk`.
+
 ## Develop
 
 Requirements: [uv](https://docs.astral.sh/uv/).
@@ -106,6 +112,7 @@ uv run alembic upgrade head
 uv run uvicorn main:app --reload --app-dir src
 uv run pytest
 uv run ruff check . && uv run ruff format --check .
+cd ../tools && uv sync && uv run pytest && uv run ruff check .
 ```
 
 The tests need the compose `db` service; they create and drop their own `helpdesk_test` database and never touch `helpdesk`. `DATABASE_URL` above points the backend at the published port of the compose database (inside compose the host is `db`).
