@@ -15,6 +15,8 @@ class Settings(BaseSettings):
     LLM_REQUEST_TIMEOUT_S: float = Field(default=45.0, gt=0)
     KEYLESS_DELAY_MIN_S: float = Field(default=5.0, ge=1)
     KEYLESS_DELAY_MAX_S: float = Field(default=30.0, ge=0)
+    LLM_CONCURRENCY: int = Field(default=20, ge=1, le=100)
+    PUBLIC_BASE_URL: str = "http://localhost:8080"
     DATABASE_URL: str = "postgresql+asyncpg://postgres:postgres@db:5432/helpdesk"
     TEST_DATABASE_URL: str = (
         "postgresql+asyncpg://postgres:postgres@127.0.0.1:5434/helpdesk_test"

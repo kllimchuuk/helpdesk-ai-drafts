@@ -6,11 +6,11 @@ This is a test task, built with AI coding agents. Read how the work is organised
 
 ## Status
 
-Work proceeds in slices (SPEC §13). Done so far: project skeleton with `/health`, Docker Compose and a placeholder page; the `ticket_events` schema with Alembic migrations; the idempotent webhook `POST /webhooks/helpdesk`; `GET /api/stats`; and the knowledge base (8 Ukrainian articles, search by text, `GET /api/kb/{slug}`). The LLM pipeline, workers, operator UI, mock helpdesk and simulator are still to come, so this file will grow with them.
+Work proceeds in slices (SPEC §13). Done so far: project skeleton with `/health`, Docker Compose and a placeholder page; the `ticket_events` schema with Alembic migrations; the idempotent webhook `POST /webhooks/helpdesk`; `GET /api/stats`; the knowledge base (8 Ukrainian articles, search by text, `GET /api/kb/{slug}`); the LLM gateway (rate limit, daily cap, keyless mode); and the generation worker that turns every new ticket into a draft. The operator UI, the send path with the mock helpdesk and the simulator are still to come, so this file will grow with them.
 
 ## Run
 
-Requirements: Docker with Compose. No configuration is needed.
+Requirements: Docker with Compose. No configuration is needed. Compose starts PostgreSQL, the backend (it runs the migrations and loads the KB), the `worker` that drafts replies, and nginx with a placeholder page.
 
 ```bash
 docker compose up --build
@@ -43,6 +43,8 @@ A new event is answered with `{"status":"accepted"}`, a repeated one with `{"sta
 curl -s http://localhost:8080/api/stats
 ```
 
+The ticket starts as `received`. Without an API key the worker sends a real request, discards the answer and stores the static reply after 5 to 30 seconds, so `/api/stats` soon shows it as `draft_ready`. Follow the worker with `docker compose logs -f worker`.
+
 Stop with `docker compose down` (add `-v` to delete the database volume).
 
 ## Knowledge base
@@ -57,13 +59,17 @@ title: Відновлення пароля
 Article text...
 ```
 
-The backend container loads the files into PostgreSQL every time it starts, so to add or change an article edit the file and run `docker compose up -d --build backend`. Read one with `curl -s http://localhost:8080/api/kb/reset-password`. Search by ticket text is done inside the service (PostgreSQL trigram similarity plus full-text rank) and will be used when drafts are generated; see `docs/DECISIONS.md` for how it was tuned and how well it works. If an article file is invalid the loader logs a warning and the service keeps running with the articles already stored.
+The backend container loads the files into PostgreSQL every time it starts, so to add or change an article edit the file and run `docker compose up -d --build backend`. Read one with `curl -s http://localhost:8080/api/kb/reset-password`. Search by ticket text is done inside the service (PostgreSQL trigram similarity plus full-text rank), and the worker puts the matching articles into the prompt and links them under the draft; see `docs/DECISIONS.md` for how it was tuned and how well it works. If an article file is invalid the loader logs a warning and the service keeps running with the articles already stored.
 
 ## LLM calls, rate limit and keyless mode
 
-Drafts will be written by Claude Haiku 5.5 through the official SDK. Every call to the provider goes through one gate stored in PostgreSQL (the `llm_calls` table), so the limit holds for the whole service whatever the number of workers: at most `LLM_RATE_LIMIT_PER_MINUTE` calls in any 60 seconds (default 55, never above 60), and at most `LLM_DAILY_CALL_CAP` real calls per UTC day (default 500), after which the service behaves as if it had no key until midnight UTC. The SDK's own retries are switched off because a retry the gate never counted would break the limit.
+Drafts are written by Claude Haiku 5.5 through the official SDK. Set `ANTHROPIC_API_KEY` in a `.env` next to `docker-compose.yml` to use a real key. Every call to the provider goes through one gate stored in PostgreSQL (the `llm_calls` table), so the limit holds for the whole service whatever the number of workers: at most `LLM_RATE_LIMIT_PER_MINUTE` calls in any 60 seconds (default 55, never above 60), and at most `LLM_DAILY_CALL_CAP` real calls per UTC day (default 500), after which the service behaves as if it had no key until midnight UTC. The SDK's own retries are switched off because a retry the gate never counted would break the limit.
 
-Without `ANTHROPIC_API_KEY` (the default, so `docker compose up` needs no configuration) the service still sends a real request with a placeholder credential, ignores the answer, waits until a random 5 to 30 seconds have passed and uses a fixed Ukrainian reply marked as static. Nothing else in the pipeline can tell the difference. The worker that uses this arrives in a later slice; so far the gate and the clients are covered by tests that never touch the network.
+Without `ANTHROPIC_API_KEY` (the default, so `docker compose up` needs no configuration) the service still sends a real request with a placeholder credential, ignores the answer, waits until a random 5 to 30 seconds have passed and uses a fixed Ukrainian reply marked as static. Nothing else in the pipeline can tell the difference; the draft is only marked `draft_is_static`. Tests never touch the network.
+
+## Generation worker
+
+`python -m workers` (the `worker` service) claims new tickets from PostgreSQL with `FOR UPDATE SKIP LOCKED`, finds KB articles, asks the model for a draft and stores it as `draft_ready`. Each claim holds a 120 s lease that a heartbeat renews every 40 s; if a worker dies, the lease expires and another worker takes the ticket. Transient failures are retried with exponential backoff up to 5 attempts, a refusal or a rejected request goes to `generation_failed` with the reason in `last_error`. Any number of workers can run against the same database (`docker compose up --scale worker=3`); `LLM_CONCURRENCY` (default 20) sets the tickets in flight per worker. Details in SPEC §7-§8 and DECISIONS (S4).
 
 ## Develop
 

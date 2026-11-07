@@ -46,6 +46,9 @@ class TicketEvent(Base):
     low_confidence: Mapped[bool] = mapped_column(
         Boolean, default=False, server_default=text("false")
     )
+    draft_is_static: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=text("false")
+    )
     gen_attempts: Mapped[int] = mapped_column(
         Integer, default=0, server_default=text("0")
     )
