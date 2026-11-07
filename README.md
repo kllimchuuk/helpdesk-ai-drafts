@@ -6,11 +6,11 @@ This is a test task, built with AI coding agents. Read how the work is organised
 
 ## Status
 
-Work proceeds in slices (SPEC §13). Done so far: project skeleton with `/health`, Docker Compose and a placeholder page; the `ticket_events` schema with Alembic migrations; the idempotent webhook `POST /webhooks/helpdesk`; `GET /api/stats`; the knowledge base (8 Ukrainian articles, search by text, `GET /api/kb/{slug}`); the LLM gateway (rate limit, daily cap, keyless mode); and the generation worker that turns every new ticket into a draft. The operator UI, the send path with the mock helpdesk and the simulator are still to come, so this file will grow with them.
+Work proceeds in slices (SPEC §13). Done so far: project skeleton with `/health`, Docker Compose and a placeholder page; the `ticket_events` schema with Alembic migrations; the idempotent webhook `POST /webhooks/helpdesk`; `GET /api/stats`; the knowledge base (8 Ukrainian articles, search by text, `GET /api/kb/{slug}`); the LLM gateway (rate limit, daily cap, keyless mode); the generation worker that turns every new ticket into a draft; and the operator UI to approve or reject drafts. The send path with the mock helpdesk and the simulator are still to come, so this file will grow with them.
 
 ## Run
 
-Requirements: Docker with Compose. No configuration is needed. Compose starts PostgreSQL, the backend (it runs the migrations and loads the KB), the `worker` that drafts replies, and nginx with a placeholder page.
+Requirements: Docker with Compose. No configuration is needed. Compose starts PostgreSQL, the backend (it runs the migrations and loads the KB), the `worker` that drafts replies, and nginx with the operator UI.
 
 ```bash
 docker compose up --build
@@ -19,7 +19,8 @@ docker compose up --build
 | What | Where |
 |---|---|
 | Health check | http://localhost:8000/health (backend) and http://localhost:8080/health (through nginx) |
-| Placeholder page | http://localhost:8080 |
+| Operator UI (login `operator` / `operator`) | http://localhost:8080 |
+| Public KB article | http://localhost:8080/kb/reset-password |
 | PostgreSQL | `127.0.0.1:5434` (change with `DB_HOST_PORT`) |
 
 Try the webhook. The loop sends the same event twice, and the second answer is `duplicate` (if you run it again on the same database volume both answers are `duplicate`):
@@ -70,6 +71,21 @@ Without `ANTHROPIC_API_KEY` (the default, so `docker compose up` needs no config
 ## Generation worker
 
 `python -m workers` (the `worker` service) claims new tickets from PostgreSQL with `FOR UPDATE SKIP LOCKED`, finds KB articles, asks the model for a draft and stores it as `draft_ready`. Each claim holds a 120 s lease that a heartbeat renews every 40 s; if a worker dies, the lease expires and another worker takes the ticket. Transient failures are retried with exponential backoff up to 5 attempts, a refusal or a rejected request goes to `generation_failed` with the reason in `last_error`. Any number of workers can run against the same database (`docker compose up --scale worker=3`); `LLM_CONCURRENCY` (default 20) sets the tickets in flight per worker. Details in SPEC §7-§8 and DECISIONS (S4).
+
+## Operator UI
+
+Static pages in `frontend/` (Bootstrap from a CDN, plain JavaScript modules, no build step) served by nginx, which also proxies `/api`, `/webhooks` and `/health` to the backend. The ticket list refreshes every 5 seconds and filters by status; a ticket page shows the customer message, the draft, its KB sources, the low-confidence and static flags and the last error, with **Approve** and **Reject** while the draft is ready. Approving twice, or two operators at once, cannot approve a reply twice: the change is one conditional `UPDATE`, and the loser gets `409`.
+
+The operator API uses Basic Auth (`OPERATOR_USER`, `OPERATOR_PASSWORD`; the browser shows its own login prompt). The defaults are refused when `APP_ENV=production`. Approve and reject also require the header `X-Requested-By: operator-ui` and a JSON body, so another site cannot post a form with the browser's cached credentials. Customer and model text is always inserted as text, never as HTML, and nginx sends a Content-Security-Policy that allows no inline or third-party scripts. Customers open KB links at `/kb/<slug>`, a public page.
+
+Try it from the command line:
+
+```bash
+curl -s -u operator:operator 'http://localhost:8080/api/tickets?status=draft_ready'
+curl -s -u operator:operator -X POST -H 'X-Requested-By: operator-ui' \
+  -H 'Content-Type: application/json' -d '{}' \
+  http://localhost:8080/api/tickets/<id>/approve
+```
 
 ## Develop
 
