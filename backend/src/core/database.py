@@ -28,10 +28,11 @@ UTC_SERVER_SETTINGS = {"timezone": "UTC"}
 UNAVAILABLE_SQLSTATE_CLASSES = ("08", "57")
 
 
-def build_engine(url: str) -> AsyncEngine:
+def build_engine(url: str, *, pool_size: int = 5) -> AsyncEngine:
     return create_async_engine(
         url,
         echo=False,
+        pool_size=pool_size,
         pool_pre_ping=True,
         hide_parameters=True,
         connect_args={"server_settings": UTC_SERVER_SETTINGS},

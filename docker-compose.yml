@@ -39,6 +39,19 @@ services:
       timeout: 5s
       retries: 10
 
+  worker:
+    build: ./backend
+    command: ["python", "-m", "workers"]
+    environment:
+      DATABASE_URL: postgresql+asyncpg://postgres:postgres@db:5432/helpdesk
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      LLM_DAILY_CALL_CAP: ${LLM_DAILY_CALL_CAP:-500}
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:8080}
+    depends_on:
+      # The backend runs the migrations and loads the KB before it is healthy.
+      backend:
+        condition: service_healthy
+
   frontend:
     build: ./frontend
     depends_on:
