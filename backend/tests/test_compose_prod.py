@@ -59,11 +59,11 @@ def test_prod_restarts_every_long_running_service() -> None:
         assert services()[name]["restart"] == "unless-stopped"
 
 
-def test_env_example_lists_every_variable_the_prod_compose_reads() -> None:
+def test_env_example_lists_exactly_the_variables_production_requires() -> None:
     example = PROD_FILE.parent / ".env.example"
     listed = {
         line.split("=")[0] for line in example.read_text().splitlines() if "=" in line
     }
-    read = set(re.findall(r"\$\{(\w+)[:?-]", PROD_FILE.read_text()))
+    required = set(re.findall(r"\$\{(\w+):\?", PROD_FILE.read_text()))
 
-    assert read - listed == set()
+    assert listed == required
