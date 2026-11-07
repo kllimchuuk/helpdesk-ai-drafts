@@ -9,6 +9,7 @@ from tests.helpers import sample_event
 from tickets.models import TicketEvent
 from tickets.repository import TicketRepositoryImpl
 from tickets.schemas import ClaimedSend, ClaimedTicket
+from tickets.service import claimed_send, claimed_ticket
 from tickets.status import TicketStatus
 from workers.send_loop import STALE_SEND_ERROR
 
@@ -30,7 +31,8 @@ async def claim(
     lease: float = LEASE,
 ) -> list[ClaimedTicket]:
     async with session_factory() as session:
-        return await TicketRepositoryImpl(session).claim_for_generation(limit, lease)
+        rows = await TicketRepositoryImpl(session).claim_for_generation(limit, lease)
+    return [claimed_ticket(row) for row in rows]
 
 
 async def load(
@@ -216,7 +218,8 @@ async def claim_sends(
     session_factory: async_sessionmaker[AsyncSession], limit: int = 10
 ) -> list[ClaimedSend]:
     async with session_factory() as session:
-        return await TicketRepositoryImpl(session).claim_for_sending(limit, LEASE)
+        rows = await TicketRepositoryImpl(session).claim_for_sending(limit, LEASE)
+    return [claimed_send(row) for row in rows]
 
 
 async def test_a_send_claim_leases_an_approved_row_and_counts_the_attempt(

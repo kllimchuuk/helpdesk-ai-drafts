@@ -1,18 +1,18 @@
 from abc import ABC, abstractmethod
-from typing import Annotated
+from collections.abc import Sequence
+from typing import Annotated, Any
 
 from fastapi import Depends
 from pydantic import TypeAdapter
-from sqlalchemy import ARRAY, Text, bindparam, delete, text
+from sqlalchemy import ARRAY, Row, Text, bindparam, delete, text
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.database import get_db, translate_unavailable
 from knowledge_base.models import KbArticle
-from knowledge_base.schemas import ArticleScore, ParsedArticle
+from knowledge_base.schemas import ParsedArticle
 
 APOSTROPHES = "’ʼ'`"
-SCORES = TypeAdapter(list[ArticleScore])
 ARTICLES = TypeAdapter(list[ParsedArticle])
 
 SCORE_QUERY = text(
@@ -49,7 +49,8 @@ class KbRepository(ABC):
     @abstractmethod
     async def score_articles(
         self, words: list[str], strong_similarity: float
-    ) -> list[ArticleScore]:
+    ) -> Sequence[Row[Any]]:
+        """One row per article: slug, title, trigram_score, fts_score, strong_words."""
         raise NotImplementedError()
 
     @abstractmethod
@@ -69,7 +70,7 @@ class KbRepositoryImpl(KbRepository):
     @translate_unavailable
     async def score_articles(
         self, words: list[str], strong_similarity: float
-    ) -> list[ArticleScore]:
+    ) -> Sequence[Row[Any]]:
         rows = await self._session.execute(
             SCORE_QUERY,
             {
@@ -79,7 +80,7 @@ class KbRepositoryImpl(KbRepository):
                 "strong": strong_similarity,
             },
         )
-        return SCORES.validate_python(rows.all(), from_attributes=True)
+        return rows.all()
 
     @translate_unavailable
     async def replace_all(self, articles: list[ParsedArticle]) -> None:

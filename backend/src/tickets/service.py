@@ -7,6 +7,8 @@ from tickets.exceptions import TicketNotFoundError, TicketStatusConflictError
 from tickets.models import TicketEvent
 from tickets.repository import TicketRepository, get_ticket_repository
 from tickets.schemas import (
+    ClaimedSend,
+    ClaimedTicket,
     StatsResponse,
     TicketDetail,
     TicketListResponse,
@@ -29,7 +31,10 @@ class TicketService:
     async def list_tickets(
         self, status: TicketStatus | None, limit: int
     ) -> TicketListResponse:
-        rows = await self._repository.list_recent(status, limit)
+        if status is None:
+            rows = await self._repository.list_recent(limit)
+        else:
+            rows = await self._repository.list_by_status(status, limit)
         return TicketListResponse(items=[summarize(row) for row in rows])
 
     async def get_ticket(self, ticket_id: str) -> TicketDetail:
@@ -73,6 +78,27 @@ def parse_id(ticket_id: str) -> uuid.UUID:
         return uuid.UUID(ticket_id)
     except ValueError:
         raise TicketNotFoundError() from None
+
+
+def claimed_ticket(row: TicketEvent) -> ClaimedTicket:
+    return ClaimedTicket(
+        id=row.id,
+        event_id=row.event_id,
+        ticket_id=row.ticket_id,
+        message=row.message,
+        attempt=row.gen_attempts,
+    )
+
+
+def claimed_send(row: TicketEvent) -> ClaimedSend:
+    return ClaimedSend(
+        id=row.id,
+        event_id=row.event_id,
+        ticket_id=row.ticket_id,
+        reply_url=row.reply_url,
+        reply=row.draft_text,
+        attempt=row.send_attempts,
+    )
 
 
 def summarize(row: TicketEvent) -> TicketSummary:

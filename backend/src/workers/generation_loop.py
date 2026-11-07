@@ -11,6 +11,7 @@ from drafting.service import DraftingService
 from llm.exceptions import LLMRateLimitedError, LLMRefusalError, LLMRejectedError
 from tickets.repository import TicketRepository
 from tickets.schemas import ClaimedTicket
+from tickets.service import claimed_ticket
 from workers.backoff import backoff_seconds
 from workers.queue_loop import QueueLoop, log
 
@@ -50,7 +51,8 @@ class GenerationLoop(QueueLoop[ClaimedTicket]):
     async def _claim_batch(
         self, tickets: TicketRepository, limit: int
     ) -> list[ClaimedTicket]:
-        return await tickets.claim_for_generation(limit, self._policy.lease_seconds)
+        rows = await tickets.claim_for_generation(limit, self._policy.lease_seconds)
+        return [claimed_ticket(row) for row in rows]
 
     async def _process(self, ticket: ClaimedTicket) -> None:
         if ticket.attempt > self._policy.max_attempts:

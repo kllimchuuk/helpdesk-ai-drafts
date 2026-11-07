@@ -7,6 +7,7 @@ from delivery.helpdesk_client import HelpdeskClient
 from delivery.schemas import SendOutcome, SendResult
 from tickets.repository import TicketRepository
 from tickets.schemas import ClaimedSend
+from tickets.service import claimed_send
 from workers.backoff import backoff_seconds
 from workers.queue_loop import QueueLoop, log
 
@@ -54,7 +55,8 @@ class SendLoop(QueueLoop[ClaimedSend]):
                 max_attempts=self._policy.max_attempts, error=STALE_SEND_ERROR
             )
         await tickets.park_stale_sends(error=STALE_SEND_ERROR)
-        return await tickets.claim_for_sending(limit, self._policy.lease_seconds)
+        rows = await tickets.claim_for_sending(limit, self._policy.lease_seconds)
+        return [claimed_send(row) for row in rows]
 
     async def _process(self, ticket: ClaimedSend) -> None:
         if not ticket.reply:

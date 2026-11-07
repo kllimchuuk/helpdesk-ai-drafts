@@ -31,8 +31,13 @@ class LlmCallRepository(ABC):
         raise NotImplementedError()
 
     @abstractmethod
-    async def seconds_until_slot(self, window_seconds: float, skip: int) -> float:
-        """Seconds until the call `skip` places after the oldest leaves the window."""
+    async def seconds_until_slot(
+        self, window_seconds: float, skip: int
+    ) -> float | None:
+        """Seconds until the call `skip` places after the oldest leaves the window.
+
+        None when the window holds no such call.
+        """
         raise NotImplementedError()
 
     @abstractmethod
@@ -68,17 +73,19 @@ class LlmCallRepositoryImpl(LlmCallRepository):
         )
 
     @translate_unavailable
-    async def seconds_until_slot(self, window_seconds: float, skip: int) -> float:
-        seconds = await self._session.scalar(
+    async def seconds_until_slot(
+        self, window_seconds: float, skip: int
+    ) -> float | None:
+        return await self._session.scalar(
             text(
-                "SELECT extract(epoch FROM called_at "
+                "SELECT CAST(extract(epoch FROM called_at "
                 "+ make_interval(secs => CAST(:window AS float8)) - clock_timestamp()) "
+                "AS float8) "
                 f"FROM llm_calls WHERE {WINDOW} "
                 "ORDER BY called_at OFFSET :skip LIMIT 1"
             ),
             {"window": window_seconds, "skip": skip},
         )
-        return float(seconds or 0.0)
 
     @translate_unavailable
     async def count_provider_calls_today(self) -> int:

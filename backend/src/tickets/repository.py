@@ -4,7 +4,7 @@ from datetime import timedelta
 from typing import Annotated, Any
 
 from fastapi import Depends
-from sqlalchemy import ColumnElement, func, or_, select, update
+from sqlalchemy import ColumnElement, Select, func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -32,8 +32,12 @@ class TicketRepository(ABC):
         raise NotImplementedError()
 
     @abstractmethod
-    async def list_recent(
-        self, status: TicketStatus | None, limit: int
+    async def list_recent(self, limit: int) -> list[TicketEvent]:
+        raise NotImplementedError()
+
+    @abstractmethod
+    async def list_by_status(
+        self, status: TicketStatus, limit: int
     ) -> list[TicketEvent]:
         raise NotImplementedError()
 
@@ -61,7 +65,7 @@ class TicketRepository(ABC):
     @abstractmethod
     async def claim_for_sending(
         self, limit: int, lease_seconds: float
-    ) -> list[ClaimedSend]:
+    ) -> list[TicketEvent]:
         raise NotImplementedError()
 
     @abstractmethod
@@ -95,7 +99,7 @@ class TicketRepository(ABC):
     @abstractmethod
     async def claim_for_generation(
         self, limit: int, lease_seconds: float
-    ) -> list[ClaimedTicket]:
+    ) -> list[TicketEvent]:
         """Lease due `received` rows and expired `generating` ones."""
         raise NotImplementedError()
 
@@ -168,17 +172,23 @@ class TicketRepositoryImpl(TicketRepository):
         return dict(rows.all())
 
     @translate_unavailable
-    async def list_recent(
-        self, status: TicketStatus | None, limit: int
+    async def list_recent(self, limit: int) -> list[TicketEvent]:
+        return list(await self._session.scalars(self._newest_first(limit)))
+
+    @translate_unavailable
+    async def list_by_status(
+        self, status: TicketStatus, limit: int
     ) -> list[TicketEvent]:
-        statement = (
+        statement = self._newest_first(limit).where(TicketEvent.status == status)
+        return list(await self._session.scalars(statement))
+
+    @staticmethod
+    def _newest_first(limit: int) -> Select[tuple[TicketEvent]]:
+        return (
             select(TicketEvent)
             .order_by(TicketEvent.created_at.desc(), TicketEvent.id.desc())
             .limit(limit)
         )
-        if status is not None:
-            statement = statement.where(TicketEvent.status == status)
-        return list(await self._session.scalars(statement))
 
     @translate_unavailable
     async def get(self, ticket_id: uuid.UUID) -> TicketEvent | None:
@@ -232,7 +242,7 @@ class TicketRepositoryImpl(TicketRepository):
     @translate_unavailable
     async def claim_for_generation(
         self, limit: int, lease_seconds: float
-    ) -> list[ClaimedTicket]:
+    ) -> list[TicketEvent]:
         due = (
             select(TicketEvent.id)
             .where(
@@ -251,7 +261,7 @@ class TicketRepositoryImpl(TicketRepository):
         )
         # A `generating` row with an expired lease belongs to a worker that died;
         # taking it again bumps the attempt, which also fences the dead worker out.
-        rows = await self._session.execute(
+        rows = await self._session.scalars(
             update(TicketEvent)
             .where(TicketEvent.id.in_(due.scalar_subquery()))
             .values(
@@ -259,24 +269,9 @@ class TicketRepositoryImpl(TicketRepository):
                 gen_attempts=TicketEvent.gen_attempts + 1,
                 locked_until=func.now() + timedelta(seconds=lease_seconds),
             )
-            .returning(
-                TicketEvent.id,
-                TicketEvent.event_id,
-                TicketEvent.ticket_id,
-                TicketEvent.message,
-                TicketEvent.gen_attempts,
-            )
+            .returning(TicketEvent)
         )
-        claimed = [
-            ClaimedTicket(
-                id=row.id,
-                event_id=row.event_id,
-                ticket_id=row.ticket_id,
-                message=row.message,
-                attempt=row.gen_attempts,
-            )
-            for row in rows
-        ]
+        claimed = list(rows)
         await self._session.commit()
         return claimed
 
@@ -337,7 +332,7 @@ class TicketRepositoryImpl(TicketRepository):
     @translate_unavailable
     async def claim_for_sending(
         self, limit: int, lease_seconds: float
-    ) -> list[ClaimedSend]:
+    ) -> list[TicketEvent]:
         due = (
             select(TicketEvent.id)
             .where(
@@ -352,7 +347,7 @@ class TicketRepositoryImpl(TicketRepository):
             .limit(limit)
             .with_for_update(skip_locked=True)
         )
-        rows = await self._session.execute(
+        rows = await self._session.scalars(
             update(TicketEvent)
             .where(TicketEvent.id.in_(due.scalar_subquery()))
             .values(
@@ -360,26 +355,9 @@ class TicketRepositoryImpl(TicketRepository):
                 send_attempts=TicketEvent.send_attempts + 1,
                 locked_until=func.now() + timedelta(seconds=lease_seconds),
             )
-            .returning(
-                TicketEvent.id,
-                TicketEvent.event_id,
-                TicketEvent.ticket_id,
-                TicketEvent.reply_url,
-                TicketEvent.draft_text,
-                TicketEvent.send_attempts,
-            )
+            .returning(TicketEvent)
         )
-        claimed = [
-            ClaimedSend(
-                id=row.id,
-                event_id=row.event_id,
-                ticket_id=row.ticket_id,
-                reply_url=row.reply_url,
-                reply=row.draft_text,
-                attempt=row.send_attempts,
-            )
-            for row in rows
-        ]
+        claimed = list(rows)
         await self._session.commit()
         return claimed
 
