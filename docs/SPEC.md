@@ -156,7 +156,7 @@ Transient generation failures return a row to `received`, and definite send fail
 - State-changing operator requests (approve, reject, mark-delivered, resend) must carry the header `X-Requested-By: operator-ui` and a JSON content type; the backend rejects them otherwise. Browsers attach cached Basic Auth credentials to cross-site form posts, so without this any web page could approve a reply (CSRF). The custom header forces a CORS preflight, which the backend does not allow.
 - Customer messages, drafts and KB text are untrusted: the pages insert them with `textContent`, never as HTML.
 - Static pages in `frontend/` call the JSON API with `fetch`. No framework and no build step.
-- `index.html` ticket list with status filter and per-status counts; it re-fetches every 5 s.
+- `index.html` ticket list with status filter and per-status counts; it re-fetches every 5 s. `GET /api/tickets?status=&limit=` returns the newest first (default 100, at most 1000) with a 160-character preview and no contact data; `GET /api/tickets/{id}` returns everything except `reply_url`. A malformed id is `404`, a review of a ticket that is not `draft_ready` is `409` with the current status.
 - `ticket.html?id=...` customer message, draft, sources, low-confidence badge, last error, **Approve** and **Reject** (only from `draft_ready`). For `send_unknown`: **Mark delivered** and **Resend**, with a warning that the reply may already have reached the customer.
 - `kb.html?slug=...` public article page (no auth), served at `/kb/<slug>` by an nginx rewrite, because customers receive these links.
 - Logs are JSON on stdout with `event_id` and `ticket_id` on every line.
@@ -254,7 +254,7 @@ Slices. Each is a commit or a few, with the module and its tests together. Deplo
 | S3 | LLM client, limiter, daily cap, keyless mode | I4, I8, I9 tests green |
 | S4 | generation worker with leases and retries | I5 test green |
 | S5 | operator UI | approve and reject work with I7 test green |
-| S6 | send path, mock helpdesk with chaos | I6 test green |
+| S6 | send path, **Mark delivered** and **Resend** for `send_unknown`, mock helpdesk with chaos | I6 test green |
 | S7 | simulator and measured run | numbers recorded in REPORT |
 | S8 | reviewer subagent pass, fixes with failing tests first | findings fixed |
 | S9 | README, final deploy, public links | a stranger can run and reach it |

@@ -1,0 +1,13 @@
+.text-block {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.preview {
+  max-width: 40rem;
+  overflow-wrap: anywhere;
+}
+
+.kb-article {
+  max-width: 48rem;
+}
