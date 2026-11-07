@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 
 import pytest
@@ -56,3 +57,13 @@ def test_prod_keeps_the_mock_helpdesk_out_of_the_default_stack() -> None:
 def test_prod_restarts_every_long_running_service() -> None:
     for name in ("db", "backend", "worker", "frontend"):
         assert services()[name]["restart"] == "unless-stopped"
+
+
+def test_env_example_lists_exactly_the_variables_production_requires() -> None:
+    example = PROD_FILE.parent / ".env.example"
+    listed = {
+        line.split("=")[0] for line in example.read_text().splitlines() if "=" in line
+    }
+    required = set(re.findall(r"\$\{(\w+):\?", PROD_FILE.read_text()))
+
+    assert listed == required

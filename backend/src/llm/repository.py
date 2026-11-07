@@ -9,8 +9,6 @@ from llm.route import LlmRoute
 
 RESERVATION_LOCK_ID = 7_364_892_002
 
-# clock_timestamp() is volatile, so the planner cannot use the called_at index
-# for it directly; wrapped in a subquery it is evaluated once and the index works.
 WINDOW = (
     "called_at > (SELECT clock_timestamp() "
     "- make_interval(secs => CAST(:window AS float8)))"
@@ -31,8 +29,13 @@ class LlmCallRepository(ABC):
         raise NotImplementedError()
 
     @abstractmethod
-    async def seconds_until_slot(self, window_seconds: float, skip: int) -> float:
-        """Seconds until the call `skip` places after the oldest leaves the window."""
+    async def seconds_until_slot(
+        self, window_seconds: float, skip: int
+    ) -> float | None:
+        """Seconds until the call `skip` places after the oldest leaves the window.
+
+        None when the window holds no such call.
+        """
         raise NotImplementedError()
 
     @abstractmethod
@@ -54,8 +57,6 @@ class LlmCallRepositoryImpl(LlmCallRepository):
 
     @translate_unavailable
     async def lock_reservations(self) -> None:
-        # Held until commit: concurrent reservations take turns, so the window
-        # count and the insert that follows it cannot interleave across workers.
         await self._session.execute(
             text("SELECT pg_advisory_xact_lock(:key)"), {"key": RESERVATION_LOCK_ID}
         )
@@ -68,17 +69,19 @@ class LlmCallRepositoryImpl(LlmCallRepository):
         )
 
     @translate_unavailable
-    async def seconds_until_slot(self, window_seconds: float, skip: int) -> float:
-        seconds = await self._session.scalar(
+    async def seconds_until_slot(
+        self, window_seconds: float, skip: int
+    ) -> float | None:
+        return await self._session.scalar(
             text(
-                "SELECT extract(epoch FROM called_at "
+                "SELECT CAST(extract(epoch FROM called_at "
                 "+ make_interval(secs => CAST(:window AS float8)) - clock_timestamp()) "
+                "AS float8) "
                 f"FROM llm_calls WHERE {WINDOW} "
                 "ORDER BY called_at OFFSET :skip LIMIT 1"
             ),
             {"window": window_seconds, "skip": skip},
         )
-        return float(seconds or 0.0)
 
     @translate_unavailable
     async def count_provider_calls_today(self) -> int:

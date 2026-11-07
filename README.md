@@ -6,7 +6,7 @@ This is a test task, built with AI coding agents. Read how the work is organised
 
 ## Status
 
-Work proceeds in slices (SPEC §13). Done so far: project skeleton with `/health`, Docker Compose and a placeholder page; the `ticket_events` schema with Alembic migrations; the idempotent webhook `POST /webhooks/helpdesk`; `GET /api/stats`; the knowledge base (8 Ukrainian articles, search by text, `GET /api/kb/{slug}`); the LLM gateway (rate limit, daily cap, keyless mode); the generation worker that turns every new ticket into a draft; the operator UI to approve or reject drafts; and the send path that delivers approved replies. The measured run is in `docs/REPORT.md`, so this file will grow with them.
+All slices S0-S7 are built and merged (SPEC §13): the idempotent webhook `POST /webhooks/helpdesk` and `GET /api/stats`; the knowledge base (8 Ukrainian articles, search by text, `GET /api/kb/{slug}`); the LLM gateway (rate limit, daily cap, keyless mode); the generation worker; the operator UI to approve or reject drafts; the send path with `send_unknown`, **Mark delivered** and **Resend**; the mock helpdesk with chaos modes; and the load simulator. The production stack is `docker-compose.prod.yml` (see "Deploy on a VDS"). The measured runs are in [`docs/REPORT.md`](docs/REPORT.md). Cut on purpose: JSON logs and HTTPS (DECISIONS, S9).
 
 ## Run
 
@@ -132,7 +132,7 @@ Options: `--events`, `--duration` (seconds), `--duplicate-rate` and `--concurren
 
 The stack runs without `ANTHROPIC_API_KEY` in keyless mode (I8). The public webhook is `POST http://<server-ip>/webhooks/helpdesk`; replies go to the `reply_url` of each event, and a `reply_url` that resolves to a private address is refused. To try the full loop on the server, start the demo receiver with `REPLY_URL_ALLOWED_HOSTS=mock-helpdesk` in `.env` and `docker compose -f docker-compose.prod.yml --profile demo up -d`, and use `http://mock-helpdesk:8000/tickets/<id>/replies` as `reply_url`.
 
-There is no TLS: the operator's Basic Auth password travels in clear text over HTTP (DECISIONS, S9). Use a strong password, and put the stack behind HTTPS before real use.
+nginx limits the public endpoints per client address: the webhook to 10 requests a second (burst 20) and the operator API to 20 a second (burst 40), answering `429` above that, and refuses bodies above 256 KB (`413`). A helpdesk that retries on a non-2xx answer loses nothing. There is no TLS: the operator's Basic Auth password travels in clear text over HTTP (DECISIONS, S9). Use a strong password, and put the stack behind HTTPS before real use.
 
 ## Develop
 
@@ -152,4 +152,4 @@ cd ../tools && uv sync && uv run pytest && uv run ruff check .
 
 The tests need the compose `db` service; they create and drop their own `helpdesk_test` database and never touch `helpdesk`. `DATABASE_URL` above points the backend at the published port of the compose database (inside compose the host is `db`).
 
-Environment variables are listed in [`.env.example`](.env.example); all of them are optional.
+[`.env.example`](.env.example) lists only what production needs (`DB_PASSWORD`, `OPERATOR_USER`, `OPERATOR_PASSWORD`, `PUBLIC_BASE_URL`); locally nothing is required. The optional settings and their defaults are listed in SPEC §14.

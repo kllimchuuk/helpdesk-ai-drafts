@@ -55,7 +55,6 @@ class QueueLoop[J: Job](ABC):
                 )
         finally:
             stopping.cancel()
-            # Leases of cancelled jobs expire and the stage's recovery takes over.
             for task in self._in_flight:
                 task.cancel()
             await asyncio.gather(*self._in_flight, return_exceptions=True)

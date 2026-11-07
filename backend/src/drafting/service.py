@@ -34,14 +34,12 @@ class DraftingService:
         )
 
     async def _retrieve(self, message: str) -> list[ParsedArticle]:
-        # The session is closed before the model is called: no transaction may
-        # stay open during a provider call.
         async with self._session_factory() as session:
             service = KbService(KbRepositoryImpl(session), min_score=self._min_score)
             return await service.find_articles(message)
 
     def _sources(
-        self, cited_slugs: list[str], articles: list[ParsedArticle]
+        self, cited_slugs: tuple[str, ...], articles: list[ParsedArticle]
     ) -> list[DraftSource]:
         cited = [article for article in articles if article.slug in set(cited_slugs)]
         return [

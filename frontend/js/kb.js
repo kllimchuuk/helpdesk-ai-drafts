@@ -12,8 +12,6 @@ function slugFromLocation() {
   return new URLSearchParams(window.location.search).get("slug") || "";
 }
 
-// Only headings, lists and paragraphs, each built as a DOM node with textContent:
-// the article never becomes HTML, so no sanitiser is needed.
 function renderMarkdown(text) {
   const blocks = [];
   let list = null;

@@ -4,9 +4,11 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict
 
+from tickets.status import TicketStatus
+
 
 class StatsResponse(BaseModel):
-    counts: dict[str, int]
+    counts: dict[TicketStatus, int]
     total: int
 
 
@@ -39,7 +41,7 @@ class TicketSummary(BaseModel):
     id: uuid.UUID
     event_id: str
     ticket_id: str
-    status: str
+    status: TicketStatus
     message_preview: str
     low_confidence: bool
     draft_is_static: bool
@@ -59,7 +61,7 @@ class TicketDetail(BaseModel):
     ticket_id: str
     customer_email: str
     message: str
-    status: str
+    status: TicketStatus
     draft_text: str | None
     draft_sources: list[DraftSourceResponse] | None
     low_confidence: bool

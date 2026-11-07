@@ -1,6 +1,3 @@
-// Every value from the API is untrusted (customer text, drafts, KB articles), so
-// elements are built with textContent and never from HTML strings.
-
 export const STATUSES = [
   "received",
   "generating",

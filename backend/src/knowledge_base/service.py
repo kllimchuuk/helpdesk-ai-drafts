@@ -3,6 +3,7 @@ from itertools import islice
 from typing import Annotated
 
 from fastapi import Depends
+from pydantic import TypeAdapter
 
 from config import Settings
 from core.dependencies import get_settings
@@ -17,6 +18,7 @@ from knowledge_base.schemas import (
     ParsedArticle,
 )
 
+SCORES = TypeAdapter(list[ArticleScore])
 MAX_WORDS = 100
 MIN_WORD_LENGTH = 3
 RESULT_LIMIT = 3
@@ -68,7 +70,8 @@ class KbService:
         words = extract_words(query)
         if not words:
             return []
-        scored = await self._repository.score_articles(words, STRONG_SIMILARITY)
+        rows = await self._repository.score_articles(words, STRONG_SIMILARITY)
+        scored = SCORES.validate_python(rows, from_attributes=True)
         relevant = [item for item in scored if self._is_relevant(item)]
         matches = [self._to_match(item) for item in relevant]
         matches.sort(key=lambda match: match.score, reverse=True)
@@ -87,8 +90,6 @@ class KbService:
         return articles
 
     def _is_relevant(self, item: ArticleScore) -> bool:
-        # A long ticket dilutes the mean word similarity, so an article also
-        # counts when several of the words match it strongly.
         return (
             self._score(item) >= self._min_score
             or item.strong_words >= MIN_STRONG_WORDS
