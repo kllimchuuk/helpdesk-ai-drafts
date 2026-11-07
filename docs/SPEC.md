@@ -162,7 +162,7 @@ Transient generation failures return a row to `received`, and definite send fail
 - `index.html` ticket list with status filter and per-status counts; it re-fetches every 5 s. `GET /api/tickets?status=&limit=` returns the newest first (default 100, at most 1000) with a 160-character preview and no contact data; `GET /api/tickets/{id}` returns everything except `reply_url`. A malformed id is `404`, a review of a ticket that is not `draft_ready` is `409` with the current status.
 - `ticket.html?id=...` customer message, draft, sources, low-confidence badge, last error, **Approve** and **Reject** (only from `draft_ready`). For `send_unknown`: **Mark delivered** and **Resend**, with a warning that the reply may already have reached the customer.
 - `kb.html?slug=...` public article page (no auth), served at `/kb/<slug>` by an nginx rewrite, because customers receive these links.
-- Logs are JSON on stdout with `event_id` and `ticket_id` on every line.
+- Logs are plain text on stdout; the worker includes the ticket context. JSON logs with `event_id` and `ticket_id` on every line are cut (DECISIONS, S9).
 
 ## 11. Mock helpdesk and simulator
 
@@ -195,8 +195,7 @@ The structure follows the owner's `cadence` project: flat feature packages under
 ```
 CLAUDE.md  README.md  .gitignore  .env.example
 docker-compose.yml          db, backend, worker, mock-helpdesk, frontend
-docker-compose.prod.yml     adds caddy (HTTPS), restart policies, db without a published port
-Caddyfile                   production only
+docker-compose.prod.yml     production stack: no default secrets, only nginx published, restart policies (DECISIONS, S9)
 docs/SPEC.md  docs/DECISIONS.md  docs/REPORT.md
 .claude/agents/reviewer.md  .claude/skills/{spec-slice,invariants-check,report}/SKILL.md
 .claude/settings.json
