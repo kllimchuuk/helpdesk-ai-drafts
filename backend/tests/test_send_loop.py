@@ -16,9 +16,8 @@ from delivery.helpdesk_client import HelpdeskClient, build_http_client
 from tests.fakes import FakeHelpdesk, resolve_to
 from tests.helpers import sample_event
 from tickets.models import TicketEvent
-from tickets.repository import STALE_SEND_ERROR
 from tickets.status import TicketStatus
-from workers.send_loop import INTERNAL_ERROR, SendLoop, SendPolicy
+from workers.send_loop import INTERNAL_ERROR, STALE_SEND_ERROR, SendLoop, SendPolicy
 
 PUBLIC_IP = "93.184.216.34"
 FAST = SendPolicy(

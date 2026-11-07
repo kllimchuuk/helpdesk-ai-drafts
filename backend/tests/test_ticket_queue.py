@@ -7,9 +7,10 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from tests.helpers import sample_event
 from tickets.models import TicketEvent
-from tickets.repository import STALE_SEND_ERROR, TicketRepositoryImpl
+from tickets.repository import TicketRepositoryImpl
 from tickets.schemas import ClaimedSend, ClaimedTicket
 from tickets.status import TicketStatus
+from workers.send_loop import STALE_SEND_ERROR
 
 LEASE = 120.0
 
@@ -258,8 +259,8 @@ async def test_an_expired_send_becomes_unknown_and_is_not_claimed_again(
     await expire_leases(session_factory)
 
     async with session_factory() as session:
-        expired = await TicketRepositoryImpl(session).expire_stale_sends(
-            retry_ambiguous=False, max_attempts=8
+        expired = await TicketRepositoryImpl(session).park_stale_sends(
+            error=STALE_SEND_ERROR
         )
 
     row = await load(session_factory, send.id)
@@ -278,8 +279,8 @@ async def test_an_expired_send_is_requeued_when_ambiguity_may_retry(
     await expire_leases(session_factory)
 
     async with session_factory() as session:
-        await TicketRepositoryImpl(session).expire_stale_sends(
-            retry_ambiguous=True, max_attempts=8
+        await TicketRepositoryImpl(session).requeue_stale_sends(
+            max_attempts=8, error=STALE_SEND_ERROR
         )
 
     [again] = await claim_sends(session_factory)
@@ -294,11 +295,14 @@ async def test_a_live_send_is_not_expired(
     [send] = await claim_sends(session_factory)
 
     async with session_factory() as session:
-        expired = await TicketRepositoryImpl(session).expire_stale_sends(
-            retry_ambiguous=False, max_attempts=8
+        repository = TicketRepositoryImpl(session)
+        expired = await repository.park_stale_sends(error=STALE_SEND_ERROR)
+        requeued = await repository.requeue_stale_sends(
+            max_attempts=8, error=STALE_SEND_ERROR
         )
 
     assert expired == 0
+    assert requeued == 0
     assert (await load(session_factory, send.id)).status == TicketStatus.SENDING
 
 
@@ -310,8 +314,8 @@ async def test_a_stale_sender_cannot_overwrite_the_new_attempt(
     [stale] = await claim_sends(session_factory)
     await expire_leases(session_factory)
     async with session_factory() as session:
-        await TicketRepositoryImpl(session).expire_stale_sends(
-            retry_ambiguous=True, max_attempts=8
+        await TicketRepositoryImpl(session).requeue_stale_sends(
+            max_attempts=8, error=STALE_SEND_ERROR
         )
     [current] = await claim_sends(session_factory)
 
@@ -332,7 +336,7 @@ async def test_a_stale_sender_cannot_overwrite_the_new_attempt(
     assert row.sent_at is not None
 
 
-async def test_an_expired_send_at_the_cap_is_parked_even_when_ambiguity_may_retry(
+async def test_an_expired_send_at_the_cap_is_not_requeued_and_is_then_parked(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
     await insert_events(session_factory, 1)
@@ -341,9 +345,12 @@ async def test_an_expired_send_at_the_cap_is_parked_even_when_ambiguity_may_retr
     await expire_leases(session_factory)
 
     async with session_factory() as session:
-        await TicketRepositoryImpl(session).expire_stale_sends(
-            retry_ambiguous=True, max_attempts=1
+        repository = TicketRepositoryImpl(session)
+        requeued = await repository.requeue_stale_sends(
+            max_attempts=1, error=STALE_SEND_ERROR
         )
+        await repository.park_stale_sends(error=STALE_SEND_ERROR)
 
+    assert requeued == 0
     assert (await load(session_factory, send.id)).status == TicketStatus.SEND_UNKNOWN
     assert await claim_sends(session_factory) == []

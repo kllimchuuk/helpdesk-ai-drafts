@@ -4,7 +4,7 @@ from datetime import timedelta
 from typing import Annotated, Any
 
 from fastapi import Depends
-from sqlalchemy import ColumnElement, case, func, literal, or_, select, update
+from sqlalchemy import ColumnElement, func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -12,8 +12,6 @@ from core.database import get_db, translate_unavailable
 from tickets.models import TicketEvent
 from tickets.schemas import ClaimedSend, ClaimedTicket
 from tickets.status import TicketStatus
-
-STALE_SEND_ERROR = "lease_expired: the worker stopped during the send"
 
 
 class TicketRepository(ABC):
@@ -51,10 +49,13 @@ class TicketRepository(ABC):
         raise NotImplementedError()
 
     @abstractmethod
-    async def resolve_unknown(
-        self, ticket_id: uuid.UUID, resolution: TicketStatus
-    ) -> TicketEvent | None:
-        """Move a `send_unknown` ticket to `sent` or back to `approved`."""
+    async def mark_unknown_delivered(self, ticket_id: uuid.UUID) -> TicketEvent | None:
+        """Move a `send_unknown` ticket to `sent`; None if it was not unknown."""
+        raise NotImplementedError()
+
+    @abstractmethod
+    async def requeue_unknown(self, ticket_id: uuid.UUID) -> TicketEvent | None:
+        """Move a `send_unknown` ticket back to `approved`; None if it was not."""
         raise NotImplementedError()
 
     @abstractmethod
@@ -64,10 +65,13 @@ class TicketRepository(ABC):
         raise NotImplementedError()
 
     @abstractmethod
-    async def expire_stale_sends(
-        self, *, retry_ambiguous: bool, max_attempts: int
-    ) -> int:
-        """Settle `sending` rows whose worker died; returns how many."""
+    async def requeue_stale_sends(self, *, max_attempts: int, error: str) -> int:
+        """Put expired `sending` rows below `max_attempts` back to `approved`."""
+        raise NotImplementedError()
+
+    @abstractmethod
+    async def park_stale_sends(self, *, error: str) -> int:
+        """Move expired `sending` rows to `send_unknown`; returns how many."""
         raise NotImplementedError()
 
     @abstractmethod
@@ -192,15 +196,22 @@ class TicketRepositoryImpl(TicketRepository):
             locked_until=None,
         )
 
-    async def resolve_unknown(
-        self, ticket_id: uuid.UUID, resolution: TicketStatus
-    ) -> TicketEvent | None:
-        if resolution == TicketStatus.SENT:
-            values = {"sent_at": func.now(), "last_error": None}
-        else:
-            values = {"next_attempt_at": func.now(), "locked_until": None}
+    async def mark_unknown_delivered(self, ticket_id: uuid.UUID) -> TicketEvent | None:
         return await self._operator_transition(
-            ticket_id, TicketStatus.SEND_UNKNOWN, status=resolution, **values
+            ticket_id,
+            TicketStatus.SEND_UNKNOWN,
+            status=TicketStatus.SENT,
+            sent_at=func.now(),
+            last_error=None,
+        )
+
+    async def requeue_unknown(self, ticket_id: uuid.UUID) -> TicketEvent | None:
+        return await self._operator_transition(
+            ticket_id,
+            TicketStatus.SEND_UNKNOWN,
+            status=TicketStatus.APPROVED,
+            next_attempt_at=func.now(),
+            locked_until=None,
         )
 
     @translate_unavailable
@@ -372,41 +383,40 @@ class TicketRepositoryImpl(TicketRepository):
         await self._session.commit()
         return claimed
 
+    async def requeue_stale_sends(self, *, max_attempts: int, error: str) -> int:
+        return await self._settle_stale_sends(
+            TicketStatus.APPROVED,
+            error,
+            TicketEvent.send_attempts < max_attempts,
+        )
+
+    async def park_stale_sends(self, *, error: str) -> int:
+        return await self._settle_stale_sends(TicketStatus.SEND_UNKNOWN, error)
+
     @translate_unavailable
-    async def expire_stale_sends(
-        self, *, retry_ambiguous: bool, max_attempts: int
+    async def _settle_stale_sends(
+        self, status: TicketStatus, error: str, *conditions: ColumnElement[bool]
     ) -> int:
         # A `sending` row whose lease expired belongs to a worker that died during
-        # the request, which may have reached the helpdesk: it is never put back
-        # in the queue unless ambiguous outcomes are allowed to retry (I6), and
-        # then only below the attempt cap, so a send that keeps killing its
-        # worker stops.
-        status: Any = TicketStatus.SEND_UNKNOWN
-        if retry_ambiguous:
-            status = case(
-                (
-                    TicketEvent.send_attempts < max_attempts,
-                    literal(TicketStatus.APPROVED.value),
-                ),
-                else_=literal(TicketStatus.SEND_UNKNOWN.value),
-            )
+        # the request; one conditional UPDATE moves each such row exactly once.
         rows = await self._session.execute(
             update(TicketEvent)
             .where(
                 TicketEvent.status == TicketStatus.SENDING,
                 TicketEvent.locked_until < func.now(),
+                *conditions,
             )
             .values(
                 status=status,
                 next_attempt_at=func.now(),
                 locked_until=None,
-                last_error=STALE_SEND_ERROR,
+                last_error=error,
             )
             .returning(TicketEvent.id)
         )
-        expired = len(rows.all())
+        settled = len(rows.all())
         await self._session.commit()
-        return expired
+        return settled
 
     async def mark_sent(self, ticket: ClaimedSend) -> bool:
         return await self._finish_send(

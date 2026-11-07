@@ -12,6 +12,7 @@ from workers.queue_loop import QueueLoop, log
 
 NO_DRAFT = "no_draft: the approved ticket has no reply text"
 INTERNAL_ERROR = "internal_error: unexpected error while sending"
+STALE_SEND_ERROR = "lease_expired: the worker stopped during the send"
 
 
 @dataclass(frozen=True)
@@ -45,10 +46,14 @@ class SendLoop(QueueLoop[ClaimedSend]):
     async def _claim_batch(
         self, tickets: TicketRepository, limit: int
     ) -> list[ClaimedSend]:
-        await tickets.expire_stale_sends(
-            retry_ambiguous=self._policy.retry_ambiguous,
-            max_attempts=self._policy.max_attempts,
-        )
+        # A send whose worker died may have reached the helpdesk, so it is parked
+        # for the operator unless ambiguous outcomes may retry (I6), and then only
+        # below the attempt cap, so a send that keeps killing its worker stops.
+        if self._policy.retry_ambiguous:
+            await tickets.requeue_stale_sends(
+                max_attempts=self._policy.max_attempts, error=STALE_SEND_ERROR
+            )
+        await tickets.park_stale_sends(error=STALE_SEND_ERROR)
         return await tickets.claim_for_sending(limit, self._policy.lease_seconds)
 
     async def _process(self, ticket: ClaimedSend) -> None:

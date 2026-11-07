@@ -42,15 +42,11 @@ class TicketService:
         return await self._review(ticket_id, TicketStatus.REJECTED)
 
     async def mark_delivered(self, ticket_id: str) -> TicketDetail:
-        row = await self._repository.resolve_unknown(
-            parse_id(ticket_id), TicketStatus.SENT
-        )
+        row = await self._repository.mark_unknown_delivered(parse_id(ticket_id))
         return await self._result(ticket_id, row)
 
     async def resend(self, ticket_id: str) -> TicketDetail:
-        row = await self._repository.resolve_unknown(
-            parse_id(ticket_id), TicketStatus.APPROVED
-        )
+        row = await self._repository.requeue_unknown(parse_id(ticket_id))
         return await self._result(ticket_id, row)
 
     async def _review(self, ticket_id: str, decision: TicketStatus) -> TicketDetail:
