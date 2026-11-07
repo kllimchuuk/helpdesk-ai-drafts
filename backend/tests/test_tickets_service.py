@@ -3,6 +3,7 @@ from datetime import UTC, datetime
 
 import pytest
 
+from tests.fakes import MissingReviewRepository
 from tickets.exceptions import TicketStatusConflictError
 from tickets.models import TicketEvent
 from tickets.service import TicketService
@@ -28,43 +29,21 @@ def ticket(status: TicketStatus) -> TicketEvent:
     )
 
 
-class RacingRepository:
-    """The conditional update misses, then the re-read sees the given statuses."""
-
-    def __init__(self, *, reviews: list[TicketEvent | None], reads: list[TicketEvent]):
-        self.reviews = reviews
-        self.reads = reads
-        self.review_calls = 0
-
-    async def review(self, ticket_id: uuid.UUID, decision: TicketStatus):
-        self.review_calls += 1
-        return self.reviews.pop(0)
-
-    async def get(self, ticket_id: uuid.UUID):
-        return self.reads.pop(0)
-
-
-async def test_a_draft_that_became_ready_during_the_review_is_reviewed() -> None:
-    """The worker saved the draft between the missed update and the re-read."""
-    approved = ticket(TicketStatus.APPROVED)
-    repository = RacingRepository(
-        reviews=[None, approved], reads=[ticket(TicketStatus.DRAFT_READY)]
-    )
-
-    result = await TicketService(repository).approve(str(approved.id))
-
-    assert result.status == TicketStatus.APPROVED
-    assert repository.review_calls == 2
-
-
-async def test_the_conflict_reports_the_status_that_blocked_the_review() -> None:
-    repository = RacingRepository(
-        reviews=[None, None],
-        reads=[ticket(TicketStatus.DRAFT_READY), ticket(TicketStatus.REJECTED)],
-    )
+async def test_an_approve_that_raced_a_new_draft_is_refused() -> None:
+    """The approve was sent before the draft existed, so nobody has read it."""
+    repository = MissingReviewRepository(ticket(TicketStatus.DRAFT_READY))
 
     with pytest.raises(TicketStatusConflictError) as caught:
-        await TicketService(repository).approve(str(uuid.uuid4()))
+        await TicketService(repository).approve(str(repository.current.id))
+
+    assert caught.value.payload == {"status": TicketStatus.DRAFT_READY}
+    assert repository.review_calls == 1
+
+
+async def test_the_conflict_reports_the_current_status() -> None:
+    repository = MissingReviewRepository(ticket(TicketStatus.REJECTED))
+
+    with pytest.raises(TicketStatusConflictError) as caught:
+        await TicketService(repository).reject(str(repository.current.id))
 
     assert caught.value.payload == {"status": TicketStatus.REJECTED}
-    assert repository.review_calls == 2

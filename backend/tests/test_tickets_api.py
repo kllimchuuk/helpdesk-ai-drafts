@@ -349,6 +349,41 @@ async def test_a_malformed_authorization_header_gets_the_usual_401(
     assert response.headers["www-authenticate"].startswith("Basic")
 
 
+@pytest.mark.parametrize(
+    "header",
+    [
+        "basic " + base64.b64encode(b"operator:operator").decode(),
+        "BASIC  " + base64.b64encode(b"operator:operator").decode(),
+    ],
+)
+async def test_the_scheme_is_case_insensitive(
+    db_client: AsyncClient, header: str
+) -> None:
+    response = await db_client.get("/api/tickets", headers={"Authorization": header})
+
+    assert response.status_code == 200
+
+
+async def test_a_password_may_contain_a_colon(migrated_schema: str) -> None:
+    app = create_app(
+        Settings(
+            _env_file=None,
+            DATABASE_URL=migrated_schema,
+            OPERATOR_PASSWORD="pa:ss:word",
+        )
+    )
+    try:
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as http:
+            response = await http.get(
+                "/api/tickets", headers=basic("operator", "pa:ss:word")
+            )
+    finally:
+        await app.state.db_engine.dispose()
+
+    assert response.status_code == 200
+
+
 async def test_non_ascii_operator_credentials_work(migrated_schema: str) -> None:
     app = create_app(
         Settings(

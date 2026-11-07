@@ -1,8 +1,11 @@
 import asyncio
+import uuid
 from collections.abc import Awaitable, Callable
 
 from llm.client import LLMClient
 from llm.schemas import LLMRequest, LLMResult
+from tickets.models import TicketEvent
+from tickets.status import TicketStatus
 
 DEFAULT_RESULT = LLMResult(reply="A drafted reply.", cited_slugs=[], is_static=False)
 
@@ -47,3 +50,24 @@ class HangingLLMClient(LLMClient):
         self.started.set()
         await asyncio.Event().wait()
         raise AssertionError("unreachable")
+
+
+class MissingReviewRepository:
+    """A ticket repository whose conditional review always misses.
+
+    It stands in for a ticket that changed between the update and the re-read,
+    for example a draft the worker saved in that moment.
+    """
+
+    def __init__(self, current: TicketEvent) -> None:
+        self.current = current
+        self.review_calls = 0
+
+    async def review(
+        self, ticket_id: uuid.UUID, decision: TicketStatus
+    ) -> TicketEvent | None:
+        self.review_calls += 1
+        return None
+
+    async def get(self, ticket_id: uuid.UUID) -> TicketEvent | None:
+        return self.current

@@ -39,6 +39,14 @@ function sourcesList(sources) {
   );
 }
 
+function conflictText(error) {
+  if (error.code !== "ticket_status_conflict") return error.message;
+  if (error.payload.status === "draft_ready") {
+    return "A new draft has just arrived. Read it before you approve or reject.";
+  }
+  return `Someone already changed this ticket (now ${error.payload.status.replaceAll("_", " ")}).`;
+}
+
 function actions(ticket) {
   if (ticket.status !== "draft_ready") return [];
   const approve = el("button", { className: "btn btn-success me-2", text: "Approve", attrs: { type: "button" } });
@@ -50,10 +58,7 @@ function actions(ticket) {
       await postAction(`${path}/${action}`);
       notice.replaceChildren();
     } catch (error) {
-      const text =
-        error.code === "ticket_status_conflict"
-          ? `Someone already changed this ticket (now ${error.payload.status}).`
-          : error.message;
+      const text = conflictText(error);
       notice.replaceChildren(el("div", { className: "alert alert-warning", text }));
     }
     await load();

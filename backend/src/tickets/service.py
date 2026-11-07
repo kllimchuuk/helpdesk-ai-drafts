@@ -15,7 +15,6 @@ from tickets.schemas import (
 from tickets.status import TicketStatus
 
 PREVIEW_LENGTH = 160
-REVIEW_ATTEMPTS = 2
 
 
 class TicketService:
@@ -43,16 +42,13 @@ class TicketService:
         return await self._review(ticket_id, TicketStatus.REJECTED)
 
     async def _review(self, ticket_id: str, decision: TicketStatus) -> TicketDetail:
-        # A miss followed by a `draft_ready` read means the worker saved the draft
-        # in between; one more attempt reviews it instead of a confusing 409.
-        for _ in range(REVIEW_ATTEMPTS):
-            row = await self._repository.review(parse_id(ticket_id), decision)
-            if row is not None:
-                return TicketDetail.model_validate(row)
+        row = await self._repository.review(parse_id(ticket_id), decision)
+        if row is None:
+            # Never retried: a miss that now reads `draft_ready` means the request
+            # was sent before the draft existed, so nobody has read that draft.
             current = await self._load(ticket_id)
-            if current.status != TicketStatus.DRAFT_READY:
-                break
-        raise TicketStatusConflictError(current.status)
+            raise TicketStatusConflictError(current.status)
+        return TicketDetail.model_validate(row)
 
     async def _load(self, ticket_id: str) -> TicketEvent:
         row = await self._repository.get(parse_id(ticket_id))
