@@ -40,7 +40,15 @@ final statuses:     {'sent': 416, 'send_unknown': 84}
 mock deliveries:    {'total': 466, 'unique': 466, 'duplicates': 0, 'deduplicated_requests': 0, 'duplicate_keys': []}
 ```
 
-- Copied events: 630 requests and 130 `duplicate` answers mean 65 events were sent as 3 copies (each gives one `accepted` and two `duplicate`); replaying the simulator's random draws with seed 7 gives the same 65.
+- Copied events: 630 requests and 130 `duplicate` answers mean 65 events were sent as 3 copies (each gives one `accepted` and two `duplicate`); replaying the simulator's random draws with seed 7 gives the same 65:
+
+  ```bash
+  cd tools && uv run python -c "import random; from simulator.run import MESSAGES
+  rng = random.Random(7); n = 0
+  for _ in range(500): rng.choice(MESSAGES); n += rng.random() < 0.1
+  print(n)"
+  ```
+
 
 From the database after the run, with `docker compose exec -T db psql -U postgres -d helpdesk -tAc "<query>"`:
 
@@ -53,7 +61,7 @@ From the database after the run, with `docker compose exec -T db psql -U postgre
 
 - The mock stored 466 replies and 416 tickets are `sent`, so by subtraction 50 of the 84 `send_unknown` tickets were stored and 34 were not. The mock's counts do not say which ones. The operator cannot tell them apart without looking at the helpdesk, which is the reason they are parked (SPEC §9).
 
-**Incident: the laptop slept for 197 s during the run.** `pmset -g log` shows `Entering Sleep state due to 'Idle Sleep'` at 15:49:20 UTC and a wake at 15:52:37 UTC; the backend log has a 196 s gap between webhooks at the same time, so the whole Docker VM was paused. When it woke, the database clock had moved past the leases of everything in flight. The service did what it should: 12 generations were taken over by a new attempt (hence 512 provider calls for 500 drafts), and the 3 sends in flight were parked as `send_unknown` instead of being sent again; the late answers of the paused tasks were dropped by the attempt fencing ("Lease lost, result dropped" in the worker log). The simulator ran in the same paused VM, which is consistent with its latency maximum of 143 ms and with the wall time (850 s from start to finish against 600 s of sending, 197 s of sleep and 37.4 s of drain); this is reasoning from those figures, not a separate measurement. Runs 2 and 3 were started under `caffeinate -i`.
+**Incident: the laptop slept for 197 s during the run.** `pmset -g log` shows `Entering Sleep state due to 'Idle Sleep'` at 15:49:20 UTC and a wake at 15:52:37 UTC; the backend log has a 196 s gap between webhooks at the same time, so the whole Docker VM was paused. When it woke, the database clock had moved past the leases of everything in flight. The service did what it should: 12 generations were taken over by a new attempt (hence 512 provider calls for 500 drafts), and the 3 sends in flight were parked as `send_unknown` instead of being sent again; the late answers of the paused tasks were dropped by the attempt fencing ("Lease lost, result dropped" in the worker log). The simulator ran in the same paused VM, which is consistent with its latency maximum of 143 ms and with the wall time (850 s from start to finish against 600 s of sending, 197 s of sleep and 37.4 s of drain, which leaves 15.6 s for container start, the mock reset and the final queries); this is reasoning from those figures, not a separate measurement. Runs 2 and 3 were started under `caffeinate -i`.
 
 ## Run 2: kill the worker and the API during generation (I3, I5)
 
@@ -62,7 +70,9 @@ export COMPOSE_PROJECT_NAME=helpdesk-measure DB_HOST_PORT=5435
 docker compose down -v && docker compose up -d
 docker compose run --rm simulator --events 60 --duration 20 --duplicate-rate 0 \
   --seed 3 --drain-timeout 0
+curl -s localhost:8000/api/stats   # printed as "before kill"
 sleep 8
+curl -s localhost:8000/api/stats   # printed as "at kill"
 docker kill -s KILL helpdesk-measure-worker-1 helpdesk-measure-backend-1
 sleep 5
 docker compose up -d backend worker

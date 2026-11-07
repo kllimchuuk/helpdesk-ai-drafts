@@ -22,6 +22,18 @@ MESSAGES = (
 OPERATOR_HEADERS = {"X-Requested-By": "operator-ui", "Content-Type": "application/json"}
 POLL_SECONDS = 1.0
 POLL_ERRORS = (httpx.HTTPError, ValueError, KeyError)
+# Wrong operator credentials or a missing CSRF header never fix themselves.
+FATAL_STATUSES = (401, 403)
+
+
+class FatalRunError(Exception):
+    pass
+
+
+def error_kind(error: Exception) -> str:
+    if isinstance(error, httpx.HTTPStatusError):
+        return f"http_{error.response.status_code}"
+    return type(error).__name__
 
 
 @dataclass(frozen=True)
@@ -106,9 +118,12 @@ async def approve_drafts(
     while not stop.is_set():
         try:
             await approve_once(http, options, report, prefix)
-        except POLL_ERRORS:
+        except FatalRunError as error:
+            report.fatal = str(error)
+            return
+        except POLL_ERRORS as error:
             # A restarting or overloaded backend must not end the run.
-            report.poll_errors += 1
+            report.poll_errors[error_kind(error)] += 1
         try:
             await asyncio.wait_for(stop.wait(), timeout=POLL_SECONDS)
         except TimeoutError:
@@ -123,6 +138,8 @@ async def approve_once(
         params={"status": "draft_ready", "limit": 1000},
         auth=options.operator,
     )
+    if response.status_code in FATAL_STATUSES:
+        raise FatalRunError(f"operator API answered {response.status_code}")
     response.raise_for_status()
     for ticket in response.json()["items"]:
         # Only this run's tickets: the database may hold the owner's real drafts.
@@ -134,21 +151,28 @@ async def approve_once(
             headers=OPERATOR_HEADERS,
             auth=options.operator,
         )
+        if approved.status_code in FATAL_STATUSES:
+            raise FatalRunError(f"operator API answered {approved.status_code}")
         if approved.status_code == 200:
             report.approved += 1
+        elif approved.status_code != 409:
+            report.approve_errors[f"http_{approved.status_code}"] += 1
 
 
 async def wait_for_drain(
     http: httpx.AsyncClient, options: Options, report: RunReport
 ) -> None:
+    report.drain_checked = options.drain_timeout > 0
     started = time.monotonic()
     while time.monotonic() - started < options.drain_timeout:
+        if report.fatal:
+            return
         try:
             response = await http.get("/api/stats")
             response.raise_for_status()
             counts = response.json()["counts"]
-        except POLL_ERRORS:
-            report.poll_errors += 1
+        except POLL_ERRORS as error:
+            report.poll_errors[error_kind(error)] += 1
         else:
             report.final_counts = counts
             if is_drained(counts, options.approve):
@@ -174,7 +198,11 @@ async def run(
             base_url=options.mock_url, timeout=timeout, transport=mock_transport
         ) as mock,
     ):
-        await mock.post("/_debug/reset")
+        try:
+            (await mock.post("/_debug/reset")).raise_for_status()
+        except httpx.HTTPError as error:
+            report.fatal = f"mock reset failed: {error_kind(error)}"
+            return report
         stop = asyncio.Event()
         approver = (
             asyncio.create_task(approve_drafts(http, options, report, run_id, stop))
@@ -186,5 +214,10 @@ async def run(
         stop.set()
         if approver is not None:
             await approver
-        report.deliveries = (await mock.get("/_debug/deliveries")).json()
+        try:
+            response = await mock.get("/_debug/deliveries")
+            response.raise_for_status()
+            report.deliveries = response.json()
+        except (httpx.HTTPError, ValueError) as error:
+            report.poll_errors[f"mock_{error_kind(error)}"] += 1
     return report

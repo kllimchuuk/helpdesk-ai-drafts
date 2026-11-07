@@ -280,3 +280,10 @@ Review findings (reviewer pass 1, "Fix before merge"), fixed in one commit:
 10. **The approver's own-tickets filter is tested**: a `draft_ready` ticket with another id stays untouched; removing the filter fails the test (mutation).
 11. **The simulator exits with status 1** when an event was accepted twice or never, the queue did not drain, or the mock stored a reply twice, so a run is usable as a check. Dedupe errors are split into "accepted twice" (an I2 violation) and "never accepted" (for example an outage).
 12. **`--json -` writes the summary to stdout**; inside the container the image runs as a non-root user and `--rm` removes files, so a file path is for host runs. The `simulator` service now also depends on the `worker`, so `docker compose run --rm simulator` on a stopped stack starts it.
+
+Review findings (reviewer pass 2, "Fix before merge": two important, four minor), fixed in one commit. Both important ones came from the pass-1 fixes:
+
+13. **`--drain-timeout 0` is no longer a failure.** It means "only send and measure", as run 2 does; the exit status counted the missing drain time as "did not drain", so the documented recipe exited 1 before the `docker kill` step. The drain check now applies only when a drain wait was asked for.
+14. **A `401` or `403` from the operator API stops the run at once** and is reported as the cause. Counting every error as a transient poll error had turned a wrong `OPERATOR_PASSWORD` into a 15-minute wait ending in an unexplained "did not drain". Poll errors are now counted by kind (`ConnectError`, `http_503`, ...), and approve answers other than `200` and `409` are counted too.
+15. **`--json -` keeps stdout parseable**: the readable text goes to stderr in that case.
+16. **The mock's reset and counts are checked**: a failed reset stops the run, and missing delivery counts fail it, because otherwise the I6 check would pass without having checked anything. REPORT now shows the `/api/stats` calls of run 2, the seeded replay that gives 65, and the 15.6 s that the wall-time reasoning leaves for start-up and queries.

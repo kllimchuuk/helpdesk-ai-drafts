@@ -4,7 +4,7 @@ from collections import Counter
 import httpx
 import pytest
 
-from simulator.__main__ import parse, write_json
+from simulator.__main__ import emit, parse
 from simulator.report import RunReport, is_drained, percentile, problems, render
 from simulator.run import Options, copies_for, run
 
@@ -200,7 +200,7 @@ async def test_transient_backend_errors_do_not_lose_the_report() -> None:
     )
     summary = report.summary()
 
-    assert summary["poll_errors"] == 3
+    assert summary["poll_errors"] == {"ConnectError": 2, "http_503": 1}
     assert summary["drain_seconds"] is not None
     assert summary["final_counts"] == {"sent": 5}
 
@@ -225,24 +225,63 @@ def test_the_report_counts_copied_events_and_splits_dedupe_errors() -> None:
         ({}, []),
         ({"dedupe_errors": 1}, ["dedupe errors: 1"]),
         ({"drain_seconds": None}, ["the queue did not drain"]),
+        ({"drain_seconds": None, "drain_checked": False}, []),
         (
             {"mock_deliveries": {"duplicates": 2}},
             ["duplicate deliveries at the mock: 2"],
         ),
+        ({"mock_deliveries": {}}, ["the mock's delivery counts are missing"]),
+        ({"fatal": "operator API answered 401"}, ["operator API answered 401"]),
     ],
 )
 def test_problems_decide_the_exit_status(changes: dict, expected: list[str]) -> None:
     summary = {
         "dedupe_errors": 0,
         "drain_seconds": 3.0,
+        "drain_checked": True,
         "mock_deliveries": {"duplicates": 0},
+        "fatal": None,
         **changes,
     }
 
     assert problems(summary) == expected
 
 
-def test_json_can_go_to_stdout(capsys: pytest.CaptureFixture[str]) -> None:
-    write_json({"events": 1}, "-")
+def test_json_on_stdout_stays_parseable(capsys: pytest.CaptureFixture[str]) -> None:
+    emit(RunReport(events=1).summary(), "-")
 
-    assert json.loads(capsys.readouterr().out) == {"events": 1}
+    captured = capsys.readouterr()
+    assert json.loads(captured.out)["events"] == 1
+    assert "p95" in captured.err
+
+
+async def test_rejected_operator_credentials_stop_the_run_at_once() -> None:
+    service = FakeService()
+
+    def refuse_operator(request: httpx.Request) -> httpx.Response:
+        if request.url.path.startswith("/api/tickets"):
+            return httpx.Response(401, json={"code": "operator_auth_required"})
+        return service.backend(request)
+
+    report = await run(
+        options(events=2, drain_timeout=30.0),
+        transport=httpx.MockTransport(refuse_operator),
+        mock_transport=httpx.MockTransport(service.mock),
+    )
+    summary = report.summary()
+
+    assert summary["fatal"] == "operator API answered 401"
+    assert summary["drain_seconds"] is None
+    assert problems(summary) == ["operator API answered 401"]
+
+
+async def test_a_run_without_a_drain_wait_only_sends() -> None:
+    service = FakeService()
+
+    report = await run(
+        options(events=2, approve=False, drain_timeout=0.0),
+        transport=httpx.MockTransport(service.backend),
+        mock_transport=httpx.MockTransport(service.mock),
+    )
+
+    assert problems(report.summary()) == []

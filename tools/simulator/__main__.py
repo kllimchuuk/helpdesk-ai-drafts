@@ -55,21 +55,24 @@ def parse(argv: list[str] | None = None) -> tuple[Options, str | None]:
     return options, args.json_path
 
 
-def write_json(summary: dict[str, object], path: str) -> None:
+def emit(summary: dict[str, object], json_path: str | None) -> None:
+    # With JSON on stdout the readable text goes to stderr, so `| jq` works.
+    text_stream = sys.stderr if json_path == "-" else sys.stdout
+    print(render(summary), file=text_stream)
+    if json_path is None:
+        return
     text = json.dumps(summary, ensure_ascii=False, indent=2)
-    if path == "-":
+    if json_path == "-":
         print(text)
         return
-    with open(path, "w", encoding="utf-8") as output:
+    with open(json_path, "w", encoding="utf-8") as output:
         output.write(text)
 
 
 def main() -> None:
     options, json_path = parse()
     summary = asyncio.run(run(options)).summary()
-    print(render(summary))
-    if json_path:
-        write_json(summary, json_path)
+    emit(summary, json_path)
     found = problems(summary)
     for problem in found:
         print(f"FAILED: {problem}", file=sys.stderr)

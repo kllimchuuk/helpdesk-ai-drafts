@@ -24,7 +24,10 @@ class RunReport:
     events: int = 0
     copied_events: int = 0
     requests: int = 0
-    poll_errors: int = 0
+    poll_errors: Counter[str] = field(default_factory=Counter)
+    approve_errors: Counter[str] = field(default_factory=Counter)
+    fatal: str | None = None
+    drain_checked: bool = True
     latencies_ms: list[float] = field(default_factory=list)
     responses: Counter[str] = field(default_factory=Counter)
     accepted_per_event: Counter[str] = field(default_factory=Counter)
@@ -65,7 +68,10 @@ class RunReport:
             "never_accepted": self.never_accepted,
             "dedupe_errors": self.accepted_twice + self.never_accepted,
             "approved": self.approved,
-            "poll_errors": self.poll_errors,
+            "approve_errors": dict(sorted(self.approve_errors.items())),
+            "poll_errors": dict(sorted(self.poll_errors.items())),
+            "fatal": self.fatal,
+            "drain_checked": self.drain_checked,
             "drain_seconds": (
                 None if self.drain_seconds is None else round(self.drain_seconds, 1)
             ),
@@ -88,6 +94,7 @@ def render(summary: dict[str, object]) -> str:
         f"never accepted {summary['never_accepted']})",
         f"approved by run:    {summary['approved']}",
         f"poll errors:        {summary['poll_errors']}",
+        f"approve errors:     {summary['approve_errors']}",
         f"drained after:      {summary['drain_seconds']} s after the last webhook",
         f"final statuses:     {summary['final_counts']}",
         f"mock deliveries:    {summary['mock_deliveries']}",
@@ -97,12 +104,17 @@ def render(summary: dict[str, object]) -> str:
 
 def problems(summary: dict[str, object]) -> list[str]:
     """What makes a run fail as a check of I2 and I6."""
+    if summary["fatal"]:
+        return [summary["fatal"]]
     found = []
     if summary["dedupe_errors"]:
         found.append(f"dedupe errors: {summary['dedupe_errors']}")
-    if summary["drain_seconds"] is None:
+    if summary["drain_checked"] and summary["drain_seconds"] is None:
         found.append("the queue did not drain")
-    duplicates = summary["mock_deliveries"].get("duplicates", 0)
-    if duplicates:
+    duplicates = summary["mock_deliveries"].get("duplicates")
+    if duplicates is None:
+        # Without the counts the I6 check would pass without checking anything.
+        found.append("the mock's delivery counts are missing")
+    elif duplicates:
         found.append(f"duplicate deliveries at the mock: {duplicates}")
     return found
