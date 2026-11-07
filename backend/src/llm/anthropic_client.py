@@ -81,7 +81,7 @@ def to_result(response: object) -> LLMResult:
     if output is None:
         raise LLMInvalidOutputError("the answer does not match the schema")
     return LLMResult(
-        reply=output.reply, cited_slugs=output.cited_slugs, is_static=False
+        reply=output.reply, cited_slugs=tuple(output.cited_slugs), is_static=False
     )
 
 

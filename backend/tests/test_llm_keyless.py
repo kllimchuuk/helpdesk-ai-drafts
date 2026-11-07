@@ -79,7 +79,7 @@ async def test_the_response_is_ignored_whatever_it_is(recorder: Recorder) -> Non
     result = await keyless(recorder, FakeTime()).complete(REQUEST)
 
     assert result.reply == STATIC_REPLY
-    assert result.cited_slugs == []
+    assert result.cited_slugs == ()
     assert result.is_static is True
 
 

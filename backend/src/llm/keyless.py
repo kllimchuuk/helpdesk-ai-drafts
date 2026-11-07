@@ -46,4 +46,4 @@ class KeylessClient(LLMClient):
         remaining = delay - (self._monotonic() - started)
         if remaining > 0:
             await self._sleep(remaining)
-        return LLMResult(reply=STATIC_REPLY, cited_slugs=[], is_static=True)
+        return LLMResult(reply=STATIC_REPLY, cited_slugs=(), is_static=True)

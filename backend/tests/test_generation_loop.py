@@ -123,7 +123,7 @@ async def test_received_tickets_become_drafts(
     await insert_events(session_factory, 3)
     llm = FakeLLMClient(
         default=LLMResult(
-            reply="Відкрийте звіт.", cited_slugs=["export-report-pdf"], is_static=False
+            reply="Відкрийте звіт.", cited_slugs=("export-report-pdf",), is_static=False
         )
     )
 

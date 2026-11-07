@@ -20,7 +20,7 @@ class LLMRequest:
 @dataclass(frozen=True)
 class LLMResult:
     reply: str
-    cited_slugs: list[str]
+    cited_slugs: tuple[str, ...]
     is_static: bool
 
 

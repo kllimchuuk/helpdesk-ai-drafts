@@ -11,7 +11,7 @@ from llm.schemas import LLMRequest, LLMResult
 from tickets.models import TicketEvent
 from tickets.status import TicketStatus
 
-DEFAULT_RESULT = LLMResult(reply="A drafted reply.", cited_slugs=[], is_static=False)
+DEFAULT_RESULT = LLMResult(reply="A drafted reply.", cited_slugs=(), is_static=False)
 
 
 class FakeLLMClient(LLMClient):

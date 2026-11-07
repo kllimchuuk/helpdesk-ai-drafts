@@ -41,7 +41,7 @@ class DraftingService:
             return await service.find_articles(message)
 
     def _sources(
-        self, cited_slugs: list[str], articles: list[ParsedArticle]
+        self, cited_slugs: tuple[str, ...], articles: list[ParsedArticle]
     ) -> list[DraftSource]:
         cited = [article for article in articles if article.slug in set(cited_slugs)]
         return [

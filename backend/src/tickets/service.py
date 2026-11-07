@@ -23,7 +23,7 @@ class TicketService:
 
     async def stats(self) -> StatsResponse:
         found = await self._repository.count_by_status()
-        counts = {status.value: found.get(status.value, 0) for status in TicketStatus}
+        counts = {status: found.get(status.value, 0) for status in TicketStatus}
         return StatsResponse(counts=counts, total=sum(counts.values()))
 
     async def list_tickets(
