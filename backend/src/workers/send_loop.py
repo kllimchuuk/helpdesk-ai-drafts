@@ -12,6 +12,7 @@ from workers.queue_loop import QueueLoop, log
 
 NO_DRAFT = "no_draft: the approved ticket has no reply text"
 INTERNAL_ERROR = "internal_error: unexpected error while sending"
+SENDS_EXHAUSTED = "lease_expired: the worker stopped during every send attempt"
 
 
 @dataclass(frozen=True)
@@ -49,6 +50,11 @@ class SendLoop(QueueLoop[ClaimedSend]):
         return await tickets.claim_for_sending(limit, self._policy.lease_seconds)
 
     async def _process(self, ticket: ClaimedSend) -> None:
+        if ticket.attempt > self._policy.max_attempts:
+            # Only reachable through expired leases (a send that keeps killing its
+            # worker); the last of those attempts may have arrived.
+            await self._settle(ticket, SendOutcome(SendResult.UNKNOWN, SENDS_EXHAUSTED))
+            return
         if not ticket.reply:
             await self._settle(ticket, SendOutcome(SendResult.FAILED, NO_DRAFT))
             return
@@ -67,9 +73,12 @@ class SendLoop(QueueLoop[ClaimedSend]):
 
     async def _settle(self, ticket: ClaimedSend, outcome: SendOutcome) -> None:
         result = outcome.result
+        exhausted = ticket.attempt >= self._policy.max_attempts
         if result == SendResult.UNKNOWN and self._policy.retry_ambiguous:
-            result = SendResult.RETRY
-        if result == SendResult.RETRY and ticket.attempt >= self._policy.max_attempts:
+            # Out of attempts it stays unknown: send_failed would tell the operator
+            # that a reply which may have arrived certainly did not.
+            result = SendResult.UNKNOWN if exhausted else SendResult.RETRY
+        if result == SendResult.RETRY and exhausted:
             result = SendResult.FAILED
         if result == SendResult.DELIVERED:
             await self._write(ticket, "sent", lambda t: t.mark_sent(ticket))

@@ -12,6 +12,12 @@ Resolver = Callable[[str, int], Awaitable[list[str]]]
 
 ALLOWED_SCHEMES = ("http", "https")
 RESOLVE_TIMEOUT_S = 5.0
+# NAT64 prefixes count as global, but a NAT64 gateway forwards them to the IPv4
+# address embedded in the last 32 bits, which may be private.
+NAT64_NETWORKS = (
+    ipaddress.ip_network("64:ff9b::/96"),
+    ipaddress.ip_network("64:ff9b:1::/48"),
+)
 
 
 async def system_resolve(host: str, port: int) -> list[str]:
@@ -52,6 +58,8 @@ def is_public(address: str) -> bool:
     # judge ::ffff:10.0.0.1 as an IPv6 address, so it is unwrapped here too.
     if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped is not None:
         ip = ip.ipv4_mapped
+    if any(ip in network for network in NAT64_NETWORKS):
+        return False
     return ip.is_global and not ip.is_multicast
 
 

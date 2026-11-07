@@ -1,4 +1,6 @@
+import asyncio
 import json
+from collections.abc import AsyncIterator
 
 import httpx
 import pytest
@@ -248,3 +250,41 @@ async def test_unusable_urls_are_refused(url: str) -> None:
 )
 def test_is_public(address: str, public: bool) -> None:
     assert is_public(address) is public
+
+
+async def test_a_send_slower_than_the_deadline_is_ambiguous() -> None:
+    """A hostile server trickling bytes must not hold a send past its lease."""
+
+    async def stall(request: httpx.Request) -> httpx.Response:
+        await asyncio.sleep(5)
+        return httpx.Response(201)
+
+    helpdesk_client = HelpdeskClient(
+        build_http_client(httpx.MockTransport(stall)),
+        allowed_hosts=frozenset(),
+        resolve=resolver(PUBLIC_IP),
+        deadline_seconds=0.1,
+    )
+
+    outcome = await send(helpdesk_client)
+
+    assert outcome.result == SendResult.UNKNOWN
+    assert outcome.detail == "send_deadline"
+
+
+async def test_the_response_body_is_never_read() -> None:
+    async def endless() -> AsyncIterator[bytes]:
+        yield b"x"
+        raise httpx.ReadError("the body never ends")
+
+    helpdesk = Helpdesk(lambda request: httpx.Response(201, content=endless()))
+
+    outcome = await send(client(helpdesk))
+
+    assert outcome.result == SendResult.DELIVERED
+
+
+@pytest.mark.parametrize("address", ["64:ff9b::a00:1", "64:ff9b:1::a00:1"])
+def test_nat64_addresses_are_not_public(address: str) -> None:
+    """Through a NAT64 gateway these reach the embedded IPv4 address, e.g. 10.0.0.1."""
+    assert is_public(address) is False

@@ -16,7 +16,7 @@ from tests.fakes import FakeHelpdesk, resolve_to
 from tests.helpers import sample_event
 from tickets.models import TicketEvent
 from tickets.status import TicketStatus
-from workers.send_loop import INTERNAL_ERROR, SendLoop, SendPolicy
+from workers.send_loop import INTERNAL_ERROR, SENDS_EXHAUSTED, SendLoop, SendPolicy
 
 PUBLIC_IP = "93.184.216.34"
 FAST = SendPolicy(
@@ -383,3 +383,39 @@ async def test_resend_puts_an_unknown_reply_back_in_the_queue(
     assert response.status_code == 200
     assert row.status == TicketStatus.SENT
     assert len(helpdesk.requests) == 1
+
+
+async def test_a_send_that_outlived_every_attempt_is_not_sent_again(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """Even when ambiguity may retry, the attempt cap still stops a crashing send."""
+    await approved_tickets(session_factory)
+    async with session_factory() as session:
+        await session.execute(
+            update(TicketEvent).values(send_attempts=FAST.max_attempts)
+        )
+        await session.commit()
+    helpdesk = FakeHelpdesk()
+    policy = replace(FAST, retry_ambiguous=True)
+
+    [row] = await run_to_end(session_factory, helpdesk, policy)
+
+    assert row.status == TicketStatus.SEND_UNKNOWN
+    assert row.last_error == SENDS_EXHAUSTED
+    assert helpdesk.requests == []
+
+
+async def test_an_ambiguous_last_attempt_stays_unknown_when_ambiguity_may_retry(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    await approved_tickets(session_factory)
+
+    def hang(request: httpx.Request) -> httpx.Response:
+        raise httpx.ReadTimeout("hung")
+
+    policy = replace(FAST, retry_ambiguous=True, max_attempts=2)
+
+    [row] = await run_to_end(session_factory, hang, policy)
+
+    assert row.status == TicketStatus.SEND_UNKNOWN
+    assert row.send_attempts == 2
