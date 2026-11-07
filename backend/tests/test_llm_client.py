@@ -188,6 +188,8 @@ async def test_a_refusal_is_reported_as_such() -> None:
         message(json.dumps({"reply": "x", "cited_slugs": "a"})),
         message(json.dumps({"reply": "x", "cited_slugs": [], "extra": 1})),
         message(json.dumps({"reply": "", "cited_slugs": []})),
+        message(json.dumps({"reply": "a\u0000b", "cited_slugs": []})),
+        message(json.dumps({"reply": "x", "cited_slugs": ["a\u0000"]})),
         message('{"reply": "cut off', stop_reason="max_tokens"),
         {**message("x"), "content": []},
     ],

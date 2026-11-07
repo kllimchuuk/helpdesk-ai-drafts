@@ -1,6 +1,7 @@
 import asyncio
 import time
 from collections.abc import Callable
+from dataclasses import replace
 from datetime import timedelta
 
 import pytest
@@ -23,7 +24,11 @@ from tests.helpers import sample_event
 from tickets.models import TicketEvent
 from tickets.repository import TicketRepositoryImpl
 from tickets.status import TicketStatus
-from workers.generation_loop import LEASE_EXHAUSTED, GenerationLoop, GenerationPolicy
+from workers.generation_loop import (
+    LEASE_EXHAUSTED,
+    GenerationLoop,
+    GenerationPolicy,
+)
 
 PDF_TICKET = "Не можу експортувати звіт у PDF"
 FAST = GenerationPolicy(
@@ -225,10 +230,14 @@ async def test_an_unexpected_error_is_retried_and_does_not_stop_the_loop(
 ) -> None:
     await insert_events(session_factory, 2)
     llm = FakeLLMClient(RuntimeError("bug"))
+    # A lease far longer than the wait: only the explicit retry can bring the
+    # ticket back in time, not the expiry of a crashed task's lease.
+    policy = replace(FAST, lease_seconds=600.0)
 
-    found = await run_to_end(session_factory, llm)
+    found = await run_to_end(session_factory, llm, policy)
 
     assert [row.status for row in found] == [TicketStatus.DRAFT_READY] * 2
+    assert sorted(row.gen_attempts for row in found) == [1, 2]
 
 
 async def test_retry_after_from_the_provider_postpones_the_next_attempt(
@@ -393,3 +402,32 @@ async def test_the_loop_survives_a_failed_claim(
 
     assert calls >= 2
     assert row.status == TicketStatus.DRAFT_READY
+
+
+async def test_a_result_that_cannot_be_written_is_logged_with_the_ticket(
+    session_factory: async_sessionmaker[AsyncSession],
+    loaded_kb: None,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    await insert_events(session_factory)
+    [event] = await rows(session_factory)
+
+    async def broken_save(self, ticket, **values) -> bool:
+        raise RuntimeError("cannot store")
+
+    monkeypatch.setattr(TicketRepositoryImpl, "save_draft", broken_save)
+    worker = Worker(session_factory, FakeLLMClient())
+    try:
+        await wait_until(session_factory, lambda found: found[0].gen_attempts == 1)
+        deadline = time.monotonic() + WAIT_LIMIT_S
+        while not any(hasattr(r, "event_id") for r in caplog.records):
+            assert time.monotonic() < deadline
+            await asyncio.sleep(0.05)
+    finally:
+        await worker.shutdown()
+
+    [record] = [r for r in caplog.records if r.levelname == "ERROR"]
+    assert record.event_id == event.event_id
+    assert record.ticket_id == event.ticket_id
+    assert record.exc_info is not None

@@ -159,6 +159,9 @@ class GenerationLoop:
         except DatabaseUnavailableError:
             log(logging.WARNING, "Database unavailable, result dropped", ticket)
             return
+        except Exception:
+            log(logging.ERROR, "Result write failed", ticket, exc_info=True)
+            return
         if written:
             log(logging.INFO, f"Generation outcome: {outcome}", ticket)
         else:

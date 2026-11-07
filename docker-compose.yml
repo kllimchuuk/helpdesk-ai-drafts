@@ -47,6 +47,7 @@ services:
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       LLM_DAILY_CALL_CAP: ${LLM_DAILY_CALL_CAP:-500}
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:8080}
+      LLM_CONCURRENCY: ${LLM_CONCURRENCY:-20}
     depends_on:
       # The backend runs the migrations and loads the KB before it is healthy.
       backend:
