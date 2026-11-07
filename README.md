@@ -4,9 +4,54 @@ A backend service that receives helpdesk tickets by webhook, finds relevant know
 
 This is a test task, built with AI coding agents. Read how the work is organised in [`CLAUDE.md`](CLAUDE.md), what the service must do in [`docs/SPEC.md`](docs/SPEC.md), and why each choice was made in [`docs/DECISIONS.md`](docs/DECISIONS.md).
 
+## Quick start for the reviewer
+
+1. **Run it locally.** You need only Docker with Compose, no configuration: `docker compose up --build`, then open http://localhost:8080 (login `operator` / `operator`) and follow "Run" below. The first build takes a few minutes; ports 8080, 8000, 8090 and 5434 must be free.
+2. **Or use the running instance** in "Public deployment" below.
+3. **Where each requirement of the task is met and measured:**
+
+| Task requirement | Where | Evidence |
+|---|---|---|
+| Webhook `POST /webhooks/helpdesk` answers within 2 s; duplicates, also simultaneous ones, are stored once; nothing is lost | `backend/src/webhooks`, `backend/src/tickets/repository.py` (`INSERT ... ON CONFLICT`) | [REPORT](docs/REPORT.md) runs 1 and 2 |
+| `/health` returns 200 `OK` | `backend/src/health` | `curl localhost:8080/health` |
+| Relevant knowledge-base articles (8, Ukrainian) with links in the draft | `backend/content/knowledge_base`, `backend/src/knowledge_base`, `backend/src/drafting` | "Knowledge base" below |
+| LLM calls: at most 60 a minute for the whole service | `backend/src/llm` | "LLM calls, rate limit and keyless mode", REPORT run 1 |
+| Works without an API key: a real request, a static reply after 5-30 s | `backend/src/llm/keyless.py` | the default of `docker compose up` |
+| Operator UI: list, approve, reject | `frontend/`, `backend/src/tickets` | "Operator UI" below |
+| Reply sent through the helpdesk API, never twice, also after 5xx and timeouts | `backend/src/delivery`, `backend/src/workers/send_loop.py` | "Sending replies" below, REPORT runs 1 and 3 |
+| Mock helpdesk | `tools/mock_helpdesk` | "Mock helpdesk" below |
+| `docker compose up`, a deployed service with public links | `docker-compose.yml`, `docker-compose.prod.yml` | "Public deployment" below |
+
+4. **How it was built.** The agent configuration and the specification are in the repository: [`CLAUDE.md`](CLAUDE.md) (instructions for the agent), `.claude/agents/reviewer.md` (a read-only reviewer subagent) and `.claude/skills/` (the work loop, the invariants checklist, the report format), [`docs/SPEC.md`](docs/SPEC.md) (the source of truth, invariants I1-I9), [`docs/DECISIONS.md`](docs/DECISIONS.md) (every decision with its reason) and [`docs/REPORT.md`](docs/REPORT.md) (the measured runs). The history is one branch and pull request per slice, merged with merge commits, never squashed.
+
 ## Status
 
-All slices S0-S7 are built and merged (SPEC §13): the idempotent webhook `POST /webhooks/helpdesk` and `GET /api/stats`; the knowledge base (8 Ukrainian articles, search by text, `GET /api/kb/{slug}`); the LLM gateway (rate limit, daily cap, keyless mode); the generation worker; the operator UI to approve or reject drafts; the send path with `send_unknown`, **Mark delivered** and **Resend**; the mock helpdesk with chaos modes; and the load simulator. The production stack is `docker-compose.prod.yml` (see "Deploy on a VDS"). The measured runs are in [`docs/REPORT.md`](docs/REPORT.md). Cut on purpose: JSON logs and HTTPS (DECISIONS, S9).
+The service is complete: the idempotent webhook, the knowledge base, the LLM gateway (rate limit, daily cap, keyless mode), the generation worker, the operator UI, the send path with `send_unknown`, **Mark delivered** and **Resend**, the mock helpdesk with chaos modes, the load simulator, and the production stack. Cut on purpose: JSON logs and HTTPS (DECISIONS, S9).
+
+## Public deployment
+
+A running instance, plain HTTP, without an API key (keyless mode):
+
+| What | Where |
+|---|---|
+| Webhook | `POST http://204.168.225.127/webhooks/helpdesk` |
+| Operator UI (login `admin`, the password is sent to the reviewer separately) | http://204.168.225.127/ |
+| Health check | http://204.168.225.127/health |
+| Public KB article | http://204.168.225.127/kb/reset-password |
+
+To see the whole loop, send an event whose `reply_url` points at the demo helpdesk running next to the service, wait 5 to 30 seconds, then open the ticket in the UI and approve the draft; it ends as `sent`:
+
+```bash
+curl -s -X POST http://204.168.225.127/webhooks/helpdesk -H 'content-type: application/json' -d '{
+  "event_id": "evt_demo_1",
+  "ticket_id": "T-9001",
+  "customer_email": "user@example.com",
+  "message": "Не можу експортувати звіт у PDF",
+  "reply_url": "http://mock-helpdesk:8000/tickets/T-9001/replies"
+}'
+```
+
+A `reply_url` on any other host is called for real, and one that resolves to a private address is refused (SPEC §9). The webhook is limited to 10 requests a second per address (HTTP `429` above that).
 
 ## Run
 
@@ -23,7 +68,7 @@ docker compose up --build
 | Public KB article | http://localhost:8080/kb/reset-password |
 | PostgreSQL | `127.0.0.1:5434` (change with `DB_HOST_PORT`) |
 
-Try the webhook. The loop sends the same event twice, and the second answer is `duplicate` (if you run it again on the same database volume both answers are `duplicate`):
+Try the webhook. The loop sends the same event twice, and the second answer is `duplicate` (if you run it again on the same database volume both answers are `duplicate`). The `reply_url` points at the mock helpdesk that Compose starts, so an approved reply ends as `sent`:
 
 ```bash
 for attempt in 1 2; do
@@ -32,7 +77,7 @@ for attempt in 1 2; do
     "ticket_id": "T-1042",
     "customer_email": "user@example.com",
     "message": "Не можу експортувати звіт у PDF",
-    "reply_url": "https://helpdesk.example.com/tickets/T-1042/replies"
+    "reply_url": "http://mock-helpdesk:8000/tickets/T-1042/replies"
   }'
   echo
 done
@@ -44,7 +89,7 @@ A new event is answered with `{"status":"accepted"}`, a repeated one with `{"sta
 curl -s http://localhost:8080/api/stats
 ```
 
-The ticket starts as `received`. Without an API key the worker sends a real request, discards the answer and stores the static reply after 5 to 30 seconds, so `/api/stats` soon shows it as `draft_ready`. Follow the worker with `docker compose logs -f worker`.
+The ticket starts as `received`. Without an API key the worker sends a real request, discards the answer and stores the static reply after 5 to 30 seconds, so `/api/stats` soon shows it as `draft_ready`. Open http://localhost:8080, open the ticket and click **Approve**: it becomes `sent`, and `curl -s http://127.0.0.1:8090/_debug/deliveries` shows one delivery. Follow the worker with `docker compose logs -f worker`.
 
 Stop with `docker compose down` (add `-v` to delete the database volume).
 
@@ -95,7 +140,7 @@ The worker also sends approved replies to the ticket's `reply_url` with the head
 
 ## Mock helpdesk
 
-`tools/mock_helpdesk` (the `mock-helpdesk` service) receives replies at `POST /tickets/{id}/replies`, answers `201` and counts deliveries per `Idempotency-Key`. Put a `reply_url` such as `http://mock-helpdesk:8000/tickets/T-1042/replies` in a webhook to send there; `mock-helpdesk` is the only host allowed to resolve to a private address. Read the counts with `curl -s http://127.0.0.1:8090/_debug/deliveries` and clear them with `curl -s -X POST http://127.0.0.1:8090/_debug/reset`.
+`tools/mock_helpdesk` (the `mock-helpdesk` service) receives replies at `POST /tickets/{id}/replies`, answers `201` and counts deliveries per `Idempotency-Key`. Put a `reply_url` such as `http://mock-helpdesk:8000/tickets/T-1042/replies` in a webhook to send there; in the local stack `mock-helpdesk` is the only host allowed to resolve to a private address (`REPLY_URL_ALLOWED_HOSTS`). Read the counts with `curl -s http://127.0.0.1:8090/_debug/deliveries` and clear them with `curl -s -X POST http://127.0.0.1:8090/_debug/reset`.
 
 Chaos comes from the root `.env`: `FAIL_5XX_RATE`, `TIMEOUT_RATE`, `HANG_AFTER_STORE_RATE` (stores the reply, then never answers in time) and `HONOR_IDEMPOTENCY_KEY=false` (stores every copy, so a duplicate send would show up as `duplicates`). Restart the service after changing them: `docker compose up -d mock-helpdesk`.
 
@@ -125,12 +170,12 @@ Options: `--events`, `--duration` (seconds), `--duplicate-rate` and `--concurren
    ```
 4. Start it and open port 80:
    ```bash
-   docker compose -f docker-compose.prod.yml up -d --build
+   docker compose -f docker-compose.prod.yml --profile demo up -d --build
    ufw allow 80          # or open port 80 in the Hetzner firewall
    ```
 5. Visit `http://<server-ip>/` (operator login from `.env`) and check `http://<server-ip>/health`.
 
-The stack runs without `ANTHROPIC_API_KEY` in keyless mode (I8). The public webhook is `POST http://<server-ip>/webhooks/helpdesk`; replies go to the `reply_url` of each event, and a `reply_url` that resolves to a private address is refused. To try the full loop on the server, start the demo receiver with `REPLY_URL_ALLOWED_HOSTS=mock-helpdesk` in `.env` and `docker compose -f docker-compose.prod.yml --profile demo up -d`, and use `http://mock-helpdesk:8000/tickets/<id>/replies` as `reply_url`.
+The stack runs without `ANTHROPIC_API_KEY` in keyless mode (I8). The public webhook is `POST http://<server-ip>/webhooks/helpdesk`; replies go to the `reply_url` of each event, and a `reply_url` that resolves to a private address is refused. The `--profile demo` above also starts the demo helpdesk; to let events send replies to it, set `REPLY_URL_ALLOWED_HOSTS=mock-helpdesk` in `.env`, and use `http://mock-helpdesk:8000/tickets/<id>/replies` as `reply_url`.
 
 nginx limits the public endpoints per client address: the webhook to 10 requests a second (burst 20) and the operator API to 20 a second (burst 40), answering `429` above that, and refuses bodies above 256 KB (`413`). A helpdesk that retries on a non-2xx answer loses nothing. There is no TLS: the operator's Basic Auth password travels in clear text over HTTP (DECISIONS, S9). Use a strong password, and put the stack behind HTTPS before real use.
 
