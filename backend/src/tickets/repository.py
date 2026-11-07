@@ -1,3 +1,4 @@
+import uuid
 from abc import ABC, abstractmethod
 from datetime import timedelta
 from typing import Annotated, Any
@@ -28,6 +29,23 @@ class TicketRepository(ABC):
 
     @abstractmethod
     async def count_by_status(self) -> dict[str, int]:
+        raise NotImplementedError()
+
+    @abstractmethod
+    async def list_recent(
+        self, status: TicketStatus | None, limit: int
+    ) -> list[TicketEvent]:
+        raise NotImplementedError()
+
+    @abstractmethod
+    async def get(self, ticket_id: uuid.UUID) -> TicketEvent | None:
+        raise NotImplementedError()
+
+    @abstractmethod
+    async def review(
+        self, ticket_id: uuid.UUID, decision: TicketStatus
+    ) -> TicketEvent | None:
+        """Move a `draft_ready` ticket to `decision`; None if it was not ready."""
         raise NotImplementedError()
 
     @abstractmethod
@@ -104,6 +122,46 @@ class TicketRepositoryImpl(TicketRepository):
             select(TicketEvent.status, func.count()).group_by(TicketEvent.status)
         )
         return dict(rows.all())
+
+    @translate_unavailable
+    async def list_recent(
+        self, status: TicketStatus | None, limit: int
+    ) -> list[TicketEvent]:
+        statement = (
+            select(TicketEvent)
+            .order_by(TicketEvent.created_at.desc(), TicketEvent.id.desc())
+            .limit(limit)
+        )
+        if status is not None:
+            statement = statement.where(TicketEvent.status == status)
+        return list(await self._session.scalars(statement))
+
+    @translate_unavailable
+    async def get(self, ticket_id: uuid.UUID) -> TicketEvent | None:
+        return await self._session.get(TicketEvent, ticket_id)
+
+    @translate_unavailable
+    async def review(
+        self, ticket_id: uuid.UUID, decision: TicketStatus
+    ) -> TicketEvent | None:
+        # One conditional UPDATE: of any number of simultaneous clicks only the
+        # first finds the row in `draft_ready`, so a reply is approved once (I7).
+        row = await self._session.scalar(
+            update(TicketEvent)
+            .where(
+                TicketEvent.id == ticket_id,
+                TicketEvent.status == TicketStatus.DRAFT_READY,
+            )
+            .values(
+                status=decision,
+                reviewed_at=func.now(),
+                next_attempt_at=func.now(),
+                locked_until=None,
+            )
+            .returning(TicketEvent)
+        )
+        await self._session.commit()
+        return row
 
     @translate_unavailable
     async def claim_for_generation(

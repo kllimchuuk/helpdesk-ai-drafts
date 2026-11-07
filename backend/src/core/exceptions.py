@@ -1,4 +1,6 @@
 from starlette.status import (
+    HTTP_401_UNAUTHORIZED,
+    HTTP_403_FORBIDDEN,
     HTTP_404_NOT_FOUND,
     HTTP_409_CONFLICT,
     HTTP_500_INTERNAL_SERVER_ERROR,
@@ -8,6 +10,7 @@ from starlette.status import (
 
 class AppException(Exception):
     status_code: int = HTTP_500_INTERNAL_SERVER_ERROR
+    headers: dict[str, str] | None = None
 
     def __init__(
         self,
@@ -19,6 +22,14 @@ class AppException(Exception):
         self.code = code
         self.message = message
         self.payload = payload or {}
+
+
+class UnauthorizedError(AppException):
+    status_code = HTTP_401_UNAUTHORIZED
+
+
+class ForbiddenError(AppException):
+    status_code = HTTP_403_FORBIDDEN
 
 
 class ConflictError(AppException):

@@ -202,3 +202,15 @@ Review findings (reviewer pass 1, "Fix before merge" and minor), fixed in one co
 20. **Compose passes `LLM_CONCURRENCY` to the worker**, so the value in the root `.env` takes effect.
 21. **The README describes the worker** (status, run, keyless behaviour, scaling).
 22. **Not changed:** delimiter look-alikes with zero-width characters pass the fence (defense in depth only, the system prompt still marks the block as data); a heartbeat cancelled mid-update and a pool peak above 35 connections are unconfirmed, and both end at worst in a skipped heartbeat or a dropped result that the lease recovers.
+
+## 2026-11-07 - Operator UI and review actions (slice S5)
+
+Basis: implementation of S5 (`feat/operator-ui`). Choices by the agent where SPEC §4 and §10 are silent. **Recommendation**, in effect once the owner merges the slice.
+
+1. **Mark delivered and Resend move to S6.** `send_unknown` only appears once the send path exists, so the two actions and their tests come with it; the ticket page already shows the SPEC §10 warning for that status. Changed: SPEC §13 (S6 row).
+2. **Basic Auth compares both halves in constant time and always both.** `secrets.compare_digest` on the user and the password, combined with `&` so the response time does not reveal which half was wrong. A failed or missing login is `401` with `WWW-Authenticate: Basic realm="operator"` (the browser shows its prompt) and code `operator_auth_required`. With `APP_ENV=production` the settings refuse to load if either the user or the password is still `operator`, so the backend and the worker do not start.
+3. **The CSRF check runs after authentication** and answers `403 operator_header_required` unless `X-Requested-By: operator-ui` and a `application/json` content type are both present. Five header combinations are tested, including a form content type.
+4. **A review is one conditional `UPDATE ... WHERE status = 'draft_ready' RETURNING`** that also sets `reviewed_at`, `next_attempt_at = now()` (so the S6 send loop takes an approved ticket at once) and clears the lease. The loser of a race gets `409 ticket_status_conflict` with the current status. Tested with 20 simultaneous approves (one `200`, nineteen `409`) and with approves and rejects mixed; removing the status condition fails 14 tests (checked by mutation). This is I7.
+5. **A malformed ticket id is `404`, not `422`.** The id is parsed in the service, so "not a UUID" and "no such ticket" look the same to the caller.
+6. **The list shows no contact data.** `GET /api/tickets` returns ids, status, flags, times and a 160-character preview, newest first, default 100 and at most 1000, optionally filtered by status. The detail adds the e-mail, the full message, the draft and its sources, attempts and the last error, but never `reply_url`, which only the send path needs. Changed: SPEC §10.
+7. **Only the worker gets the model key.** Since S4 the backend never calls the model, so compose no longer passes `ANTHROPIC_API_KEY` and `LLM_DAILY_CALL_CAP` to it; it gets `OPERATOR_USER` and `OPERATOR_PASSWORD` instead.

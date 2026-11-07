@@ -17,9 +17,43 @@ def test_settings_load_without_any_environment() -> None:
 
 
 def test_environment_overrides_a_default(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setenv("APP_ENV", "staging")
 
-    assert Settings(_env_file=None).APP_ENV == "production"
+    assert Settings(_env_file=None).APP_ENV == "staging"
+
+
+@pytest.mark.parametrize(
+    ("user", "password"),
+    [("operator", "operator"), ("operator", "s3cret-long"), ("admin", "operator")],
+)
+def test_production_refuses_default_operator_credentials(
+    user: str, password: str
+) -> None:
+    with pytest.raises(ValueError, match="OPERATOR_"):
+        Settings(
+            _env_file=None,
+            APP_ENV="production",
+            OPERATOR_USER=user,
+            OPERATOR_PASSWORD=password,
+        )
+
+
+def test_production_starts_with_its_own_operator_credentials() -> None:
+    settings = Settings(
+        _env_file=None,
+        APP_ENV="production",
+        OPERATOR_USER="admin",
+        OPERATOR_PASSWORD="s3cret-long",
+    )
+
+    assert settings.OPERATOR_PASSWORD.get_secret_value() == "s3cret-long"
+
+
+def test_local_runs_with_the_default_operator_credentials() -> None:
+    settings = Settings(_env_file=None)
+
+    assert settings.OPERATOR_USER == "operator"
+    assert settings.OPERATOR_PASSWORD.get_secret_value() == "operator"
 
 
 def test_unknown_environment_variables_are_ignored(
