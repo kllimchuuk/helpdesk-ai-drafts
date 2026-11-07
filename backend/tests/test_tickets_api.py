@@ -1,11 +1,15 @@
 import asyncio
+import base64
 import uuid
 from collections import Counter
+from datetime import UTC, datetime, timedelta
 
 import pytest
-from httpx import AsyncClient
+from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from config import Settings
+from main import create_app
 from tests.helpers import sample_event
 from tickets.models import TicketEvent
 from tickets.status import TicketStatus
@@ -220,7 +224,8 @@ async def test_an_unknown_ticket_is_a_404(
 async def test_approve_moves_a_draft_to_approved(
     db_client: AsyncClient, session_factory: async_sessionmaker[AsyncSession]
 ) -> None:
-    row = await add_ticket(session_factory)
+    later = datetime.now(UTC) + timedelta(hours=1)
+    row = await add_ticket(session_factory, next_attempt_at=later, locked_until=later)
 
     response = await act(db_client, row.id, "approve")
 
@@ -229,7 +234,7 @@ async def test_approve_moves_a_draft_to_approved(
     stored = await load(session_factory, row.id)
     assert stored.status == TicketStatus.APPROVED
     assert stored.reviewed_at is not None
-    assert stored.next_attempt_at <= stored.reviewed_at
+    assert stored.next_attempt_at == stored.reviewed_at
     assert stored.locked_until is None
 
 
@@ -317,3 +322,49 @@ async def test_concurrent_approve_and_reject_leave_one_decision(
 async def test_public_routes_stay_public(db_client: AsyncClient) -> None:
     assert (await db_client.get("/api/stats")).status_code == 200
     assert (await db_client.get("/health")).status_code == 200
+
+
+def basic(user: str, password: str) -> dict[str, str]:
+    token = base64.b64encode(f"{user}:{password}".encode()).decode()
+    return {"Authorization": f"Basic {token}"}
+
+
+@pytest.mark.parametrize(
+    "header",
+    [
+        "Basic !!!",
+        "Basic",
+        "Basic " + base64.b64encode(b"\xff\xfe:x").decode(),
+        "Basic " + base64.b64encode(b"no-colon").decode(),
+        "Bearer abc",
+    ],
+)
+async def test_a_malformed_authorization_header_gets_the_usual_401(
+    db_client: AsyncClient, header: str
+) -> None:
+    response = await db_client.get("/api/tickets", headers={"Authorization": header})
+
+    assert response.status_code == 401
+    assert response.json()["code"] == "operator_auth_required"
+    assert response.headers["www-authenticate"].startswith("Basic")
+
+
+async def test_non_ascii_operator_credentials_work(migrated_schema: str) -> None:
+    app = create_app(
+        Settings(
+            _env_file=None,
+            DATABASE_URL=migrated_schema,
+            OPERATOR_USER="оператор",
+            OPERATOR_PASSWORD="пароль-123",
+        )
+    )
+    transport = ASGITransport(app=app)
+    try:
+        async with AsyncClient(transport=transport, base_url="http://test") as http:
+            ok = await http.get("/api/tickets", headers=basic("оператор", "пароль-123"))
+            wrong = await http.get("/api/tickets", headers=basic("оператор", "інший"))
+    finally:
+        await app.state.db_engine.dispose()
+
+    assert ok.status_code == 200
+    assert wrong.status_code == 401

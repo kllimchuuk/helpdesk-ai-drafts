@@ -1,8 +1,10 @@
+import base64
+import binascii
 import secrets
+from dataclasses import dataclass
 from typing import Annotated
 
 from fastapi import Depends, Request
-from fastapi.security import HTTPBasic, HTTPBasicCredentials
 
 from config import Settings
 from core.dependencies import get_settings
@@ -12,7 +14,11 @@ OPERATOR_UI_HEADER = "x-requested-by"
 OPERATOR_UI_VALUE = "operator-ui"
 JSON_CONTENT_TYPE = "application/json"
 
-basic_auth = HTTPBasic(auto_error=False, realm="operator")
+
+@dataclass(frozen=True)
+class BasicCredentials:
+    username: str
+    password: str
 
 
 class OperatorAuthRequiredError(UnauthorizedError):
@@ -34,15 +40,32 @@ class OperatorHeaderRequiredError(ForbiddenError):
 
 
 def require_operator(
-    credentials: Annotated[HTTPBasicCredentials | None, Depends(basic_auth)],
+    request: Request,
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> str:
+    credentials = parse_basic(request.headers.get("authorization", ""))
     if credentials is None or not credentials_match(credentials, settings):
         raise OperatorAuthRequiredError()
     return credentials.username
 
 
-def credentials_match(credentials: HTTPBasicCredentials, settings: Settings) -> bool:
+def parse_basic(header: str) -> BasicCredentials | None:
+    # Parsed here rather than with FastAPI's HTTPBasic, which decodes as ASCII and
+    # answers malformed headers with its own error body instead of ours.
+    scheme, _, token = header.partition(" ")
+    if scheme.lower() != "basic" or not token:
+        return None
+    try:
+        decoded = base64.b64decode(token.strip(), validate=True).decode("utf-8")
+    except (binascii.Error, UnicodeDecodeError):
+        return None
+    username, separator, password = decoded.partition(":")
+    if not separator:
+        return None
+    return BasicCredentials(username=username, password=password)
+
+
+def credentials_match(credentials: BasicCredentials, settings: Settings) -> bool:
     # Both comparisons always run, in constant time, so the response time does
     # not reveal which half was wrong.
     user_ok = secrets.compare_digest(
