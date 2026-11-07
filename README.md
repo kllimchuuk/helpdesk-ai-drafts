@@ -107,7 +107,7 @@ Chaos comes from the root `.env`: `FAIL_5XX_RATE`, `TIMEOUT_RATE`, `HANG_AFTER_S
 docker compose run --rm simulator --events 500 --duration 600 --approve
 ```
 
-Options: `--events`, `--duration` (seconds), `--duplicate-rate` and `--concurrent-duplicates` (that share of events is sent as several simultaneous copies), `--approve` (approve this run's drafts so they are sent), `--seed`, `--json <file>`. It prints webhook latency, the answers (`accepted` exactly once per event), the time until the queue drained, final status counts and the deliveries counted by the mock. It resets the mock's counts, so use a fresh database (`docker compose down -v` first) for numbers you want to keep. Results of the measured run are in [`docs/REPORT.md`](docs/REPORT.md).
+Options: `--events`, `--duration` (seconds), `--duplicate-rate` and `--concurrent-duplicates` (that share of events is sent as several simultaneous copies), `--approve` (approve this run's drafts so they are sent), `--seed`, `--json <file>` (or `--json -` for stdout, the form that works inside the container). It prints webhook latency, the answers (`accepted` exactly once per event), the time until the queue drained, final status counts and the deliveries counted by the mock, and exits with status 1 if an event was accepted twice or never, the queue did not drain, or the mock stored a reply twice. Errors while polling the backend are counted and the run continues. It resets the mock's counts, so use a fresh database (`docker compose down -v` first) for numbers you want to keep. Results of the measured run are in [`docs/REPORT.md`](docs/REPORT.md).
 
 ## Develop
 

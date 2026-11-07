@@ -2,8 +2,9 @@ import argparse
 import asyncio
 import json
 import os
+import sys
 
-from simulator.report import render
+from simulator.report import problems, render
 from simulator.run import Options, run
 
 
@@ -26,7 +27,12 @@ def parse(argv: list[str] | None = None) -> tuple[Options, str | None]:
     )
     parser.add_argument("--drain-timeout", type=float, default=900.0)
     parser.add_argument("--seed", type=int, default=None)
-    parser.add_argument("--json", dest="json_path", default=None)
+    parser.add_argument(
+        "--json",
+        dest="json_path",
+        default=None,
+        help="also write the summary as JSON to this file, or to stdout with '-'",
+    )
     args = parser.parse_args(argv)
     if args.events < 1 or args.duration < 0 or not 0 <= args.duplicate_rate <= 1:
         parser.error("events must be positive, duration and duplicate rate in range")
@@ -49,13 +55,25 @@ def parse(argv: list[str] | None = None) -> tuple[Options, str | None]:
     return options, args.json_path
 
 
+def write_json(summary: dict[str, object], path: str) -> None:
+    text = json.dumps(summary, ensure_ascii=False, indent=2)
+    if path == "-":
+        print(text)
+        return
+    with open(path, "w", encoding="utf-8") as output:
+        output.write(text)
+
+
 def main() -> None:
     options, json_path = parse()
     summary = asyncio.run(run(options)).summary()
     print(render(summary))
     if json_path:
-        with open(json_path, "w", encoding="utf-8") as output:
-            json.dump(summary, output, ensure_ascii=False, indent=2)
+        write_json(summary, json_path)
+    found = problems(summary)
+    for problem in found:
+        print(f"FAILED: {problem}", file=sys.stderr)
+    sys.exit(1 if found else 0)
 
 
 if __name__ == "__main__":

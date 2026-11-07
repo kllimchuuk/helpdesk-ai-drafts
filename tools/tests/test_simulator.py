@@ -4,8 +4,8 @@ from collections import Counter
 import httpx
 import pytest
 
-from simulator.__main__ import parse
-from simulator.report import RunReport, is_drained, percentile, render
+from simulator.__main__ import parse, write_json
+from simulator.report import RunReport, is_drained, percentile, problems, render
 from simulator.run import Options, copies_for, run
 
 
@@ -61,7 +61,7 @@ def test_dedupe_errors_count_events_accepted_twice_or_never() -> None:
     report.record("b", "accepted", 1.0)
     report.record("b", "accepted", 1.0)
 
-    assert report.dedupe_errors == 2
+    assert report.summary()["dedupe_errors"] == 2
 
 
 class FakeService:
@@ -159,3 +159,90 @@ def test_the_command_line_follows_spec(monkeypatch: pytest.MonkeyPatch) -> None:
     assert parsed.approve is True
     assert parsed.operator == ("operator", "secret")
     assert json_path == "out.json"
+
+
+async def test_the_run_never_approves_tickets_it_did_not_send() -> None:
+    """--approve must not send the owner's real drafts."""
+    service = FakeService()
+    service.tickets["owner"] = {
+        "id": "owner",
+        "ticket_id": "T-1042",
+        "status": "draft_ready",
+    }
+
+    report = await run(
+        options(events=3, drain_timeout=1.0),
+        transport=httpx.MockTransport(service.backend),
+        mock_transport=httpx.MockTransport(service.mock),
+    )
+
+    assert service.tickets["owner"]["status"] == "draft_ready"
+    assert report.approved == 3
+
+
+async def test_transient_backend_errors_do_not_lose_the_report() -> None:
+    service = FakeService()
+    failures = {"/api/tickets": 1, "/api/stats": 2}
+
+    def flaky(request: httpx.Request) -> httpx.Response:
+        left = failures.get(request.url.path, 0)
+        if left:
+            failures[request.url.path] = left - 1
+            if left == 2:
+                return httpx.Response(503, json={"code": "database_unavailable"})
+            raise httpx.ConnectError("backend restarting")
+        return service.backend(request)
+
+    report = await run(
+        options(events=5),
+        transport=httpx.MockTransport(flaky),
+        mock_transport=httpx.MockTransport(service.mock),
+    )
+    summary = report.summary()
+
+    assert summary["poll_errors"] == 3
+    assert summary["drain_seconds"] is not None
+    assert summary["final_counts"] == {"sent": 5}
+
+
+def test_the_report_counts_copied_events_and_splits_dedupe_errors() -> None:
+    report = RunReport(events=3, copied_events=1)
+    report.record("a", "accepted", 1.0)
+    report.record("a", "accepted", 1.0)
+    report.record("b", "accepted", 1.0)
+
+    summary = report.summary()
+
+    assert summary["copied_events"] == 1
+    assert summary["accepted_twice"] == 1
+    assert summary["never_accepted"] == 1
+    assert summary["dedupe_errors"] == 2
+
+
+@pytest.mark.parametrize(
+    ("changes", "expected"),
+    [
+        ({}, []),
+        ({"dedupe_errors": 1}, ["dedupe errors: 1"]),
+        ({"drain_seconds": None}, ["the queue did not drain"]),
+        (
+            {"mock_deliveries": {"duplicates": 2}},
+            ["duplicate deliveries at the mock: 2"],
+        ),
+    ],
+)
+def test_problems_decide_the_exit_status(changes: dict, expected: list[str]) -> None:
+    summary = {
+        "dedupe_errors": 0,
+        "drain_seconds": 3.0,
+        "mock_deliveries": {"duplicates": 0},
+        **changes,
+    }
+
+    assert problems(summary) == expected
+
+
+def test_json_can_go_to_stdout(capsys: pytest.CaptureFixture[str]) -> None:
+    write_json({"events": 1}, "-")
+
+    assert json.loads(capsys.readouterr().out) == {"events": 1}

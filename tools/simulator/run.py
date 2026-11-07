@@ -20,6 +20,8 @@ MESSAGES = (
     "Яка завтра погода у Львові на вихідних?",
 )
 OPERATOR_HEADERS = {"X-Requested-By": "operator-ui", "Content-Type": "application/json"}
+POLL_SECONDS = 1.0
+POLL_ERRORS = (httpx.HTTPError, ValueError, KeyError)
 
 
 @dataclass(frozen=True)
@@ -65,7 +67,7 @@ async def send_webhook(
             if response.status_code == 200
             else f"http_{response.status_code}"
         )
-    except httpx.HTTPError as error:
+    except (httpx.HTTPError, ValueError) as error:
         outcome = type(error).__name__
     report.record(event["event_id"], outcome, (time.perf_counter() - started) * 1000)
 
@@ -82,7 +84,10 @@ async def send_events(
         if delay > 0:
             await asyncio.sleep(delay)
         event = build_event(run_id, index, options, rng.choice)
-        for _ in range(copies_for(rng.random(), options)):
+        copies = copies_for(rng.random(), options)
+        if copies > 1:
+            report.copied_events += 1
+        for _ in range(copies):
             task = asyncio.create_task(send_webhook(http, event, report))
             pending.add(task)
             task.add_done_callback(pending.discard)
@@ -99,27 +104,38 @@ async def approve_drafts(
 ) -> None:
     prefix = f"SIM-{run_id}-"
     while not stop.is_set():
-        response = await http.get(
-            "/api/tickets",
-            params={"status": "draft_ready", "limit": 1000},
-            auth=options.operator,
-        )
-        response.raise_for_status()
-        for ticket in response.json()["items"]:
-            if not ticket["ticket_id"].startswith(prefix):
-                continue
-            approved = await http.post(
-                f"/api/tickets/{ticket['id']}/approve",
-                content="{}",
-                headers=OPERATOR_HEADERS,
-                auth=options.operator,
-            )
-            if approved.status_code == 200:
-                report.approved += 1
         try:
-            await asyncio.wait_for(stop.wait(), timeout=1.0)
+            await approve_once(http, options, report, prefix)
+        except POLL_ERRORS:
+            # A restarting or overloaded backend must not end the run.
+            report.poll_errors += 1
+        try:
+            await asyncio.wait_for(stop.wait(), timeout=POLL_SECONDS)
         except TimeoutError:
             pass
+
+
+async def approve_once(
+    http: httpx.AsyncClient, options: Options, report: RunReport, prefix: str
+) -> None:
+    response = await http.get(
+        "/api/tickets",
+        params={"status": "draft_ready", "limit": 1000},
+        auth=options.operator,
+    )
+    response.raise_for_status()
+    for ticket in response.json()["items"]:
+        # Only this run's tickets: the database may hold the owner's real drafts.
+        if not ticket["ticket_id"].startswith(prefix):
+            continue
+        approved = await http.post(
+            f"/api/tickets/{ticket['id']}/approve",
+            content="{}",
+            headers=OPERATOR_HEADERS,
+            auth=options.operator,
+        )
+        if approved.status_code == 200:
+            report.approved += 1
 
 
 async def wait_for_drain(
@@ -127,12 +143,18 @@ async def wait_for_drain(
 ) -> None:
     started = time.monotonic()
     while time.monotonic() - started < options.drain_timeout:
-        stats = (await http.get("/api/stats")).json()
-        report.final_counts = stats["counts"]
-        if is_drained(stats["counts"], options.approve):
-            report.drain_seconds = time.monotonic() - started
-            return
-        await asyncio.sleep(1.0)
+        try:
+            response = await http.get("/api/stats")
+            response.raise_for_status()
+            counts = response.json()["counts"]
+        except POLL_ERRORS:
+            report.poll_errors += 1
+        else:
+            report.final_counts = counts
+            if is_drained(counts, options.approve):
+                report.drain_seconds = time.monotonic() - started
+                return
+        await asyncio.sleep(POLL_SECONDS)
 
 
 async def run(

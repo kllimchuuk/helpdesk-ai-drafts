@@ -22,7 +22,9 @@ def is_drained(counts: dict[str, int], approving: bool) -> bool:
 @dataclass
 class RunReport:
     events: int = 0
+    copied_events: int = 0
     requests: int = 0
+    poll_errors: int = 0
     latencies_ms: list[float] = field(default_factory=list)
     responses: Counter[str] = field(default_factory=Counter)
     accepted_per_event: Counter[str] = field(default_factory=Counter)
@@ -39,15 +41,19 @@ class RunReport:
             self.accepted_per_event[event_id] += 1
 
     @property
-    def dedupe_errors(self) -> int:
-        """Events accepted more or less than once (I2)."""
-        accepted_twice = sum(1 for n in self.accepted_per_event.values() if n > 1)
-        never_accepted = self.events - len(self.accepted_per_event)
-        return accepted_twice + never_accepted
+    def accepted_twice(self) -> int:
+        """Events the backend accepted more than once: an I2 violation."""
+        return sum(1 for n in self.accepted_per_event.values() if n > 1)
+
+    @property
+    def never_accepted(self) -> int:
+        """Events with no `accepted` answer, for example during an outage."""
+        return self.events - len(self.accepted_per_event)
 
     def summary(self) -> dict[str, object]:
         return {
             "events": self.events,
+            "copied_events": self.copied_events,
             "webhook_requests": self.requests,
             "latency_ms": {
                 "p50": round(percentile(self.latencies_ms, 0.50), 1),
@@ -55,8 +61,11 @@ class RunReport:
                 "max": round(max(self.latencies_ms, default=0.0), 1),
             },
             "responses": dict(sorted(self.responses.items())),
-            "dedupe_errors": self.dedupe_errors,
+            "accepted_twice": self.accepted_twice,
+            "never_accepted": self.never_accepted,
+            "dedupe_errors": self.accepted_twice + self.never_accepted,
             "approved": self.approved,
+            "poll_errors": self.poll_errors,
             "drain_seconds": (
                 None if self.drain_seconds is None else round(self.drain_seconds, 1)
             ),
@@ -69,14 +78,31 @@ def render(summary: dict[str, object]) -> str:
     latency = summary["latency_ms"]
     lines = [
         f"events sent:        {summary['events']} "
-        f"({summary['webhook_requests']} webhook requests with duplicates)",
+        f"({summary['copied_events']} sent as simultaneous copies, "
+        f"{summary['webhook_requests']} webhook requests)",
         f"webhook latency ms: p50 {latency['p50']}, p95 {latency['p95']}, "
         f"max {latency['max']}",
         f"responses:          {summary['responses']}",
-        f"dedupe errors:      {summary['dedupe_errors']}",
+        f"dedupe errors:      {summary['dedupe_errors']} "
+        f"(accepted twice {summary['accepted_twice']}, "
+        f"never accepted {summary['never_accepted']})",
         f"approved by run:    {summary['approved']}",
+        f"poll errors:        {summary['poll_errors']}",
         f"drained after:      {summary['drain_seconds']} s after the last webhook",
         f"final statuses:     {summary['final_counts']}",
         f"mock deliveries:    {summary['mock_deliveries']}",
     ]
     return "\n".join(lines)
+
+
+def problems(summary: dict[str, object]) -> list[str]:
+    """What makes a run fail as a check of I2 and I6."""
+    found = []
+    if summary["dedupe_errors"]:
+        found.append(f"dedupe errors: {summary['dedupe_errors']}")
+    if summary["drain_seconds"] is None:
+        found.append("the queue did not drain")
+    duplicates = summary["mock_deliveries"].get("duplicates", 0)
+    if duplicates:
+        found.append(f"duplicate deliveries at the mock: {duplicates}")
+    return found
