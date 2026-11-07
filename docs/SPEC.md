@@ -125,6 +125,7 @@ Transient generation failures return a row to `received`, and definite send fail
 - A claim is `SELECT ... WHERE status = :stage AND next_attempt_at <= now() AND (locked_until IS NULL OR locked_until < now()) FOR UPDATE SKIP LOCKED`, then set `locked_until = now() + lease`. Lease is 120 s with a heartbeat every 40 s while the call is waiting or running.
 - Generation claims `received` rows and `generating` rows whose lease expired (the worker died), and increments `gen_attempts` on every claim. The attempt number fences the result: saving, retrying, failing and the heartbeat are compare-and-set on `status = 'generating' AND gen_attempts = :attempt`, so a worker that lost its lease cannot overwrite the new owner. A row reclaimed beyond the attempt cap goes to `generation_failed` without a model call.
 - Concurrency is configurable (defaults: 20 generation tasks, 10 send tasks). Polling interval 1 s.
+- Sending claims `approved` rows, moves them to `sending` and increments `send_attempts`, which fences the result like `gen_attempts` does. A send needs no heartbeat: DNS is cut off after 5 s and the request after 30 s, far below the lease; the response body is never read. Before each claim, `sending` rows whose lease expired become `send_unknown` (or `approved` with `SEND_RETRY_AMBIGUOUS=true` while `send_attempts` is below the cap). An operator Resend keeps the counter, so a Resend after the cap gets exactly one attempt.
 - Backoff is exponential with jitter: the ceiling is 5 s doubled per attempt, capped at 300 s, and the delay is drawn between half the ceiling and the ceiling. A provider `Retry-After` raises the delay to at least that value. Attempt caps: 5 for generation, 8 for sending.
 - Rate limiter: before each provider request, take `pg_advisory_xact_lock`, count `llm_calls` in the last 60 s, and insert a row only if below the limit (default 55 to leave a margin for clock skew). Otherwise wait and retry. It works for any number of workers.
 
@@ -143,12 +144,14 @@ Transient generation failures return a row to `received`, and definite send fail
 - Classify the outcome:
   - `201` -> `sent`.
   - **Definite failure** (nothing was delivered): connection or DNS error before the request is sent, or an HTTP `5xx` -> retry with backoff, up to the attempt cap, then `send_failed`.
-  - Other `4xx` -> `send_failed` (terminal, no retry).
-  - **Ambiguous** (the request may have reached the helpdesk): read timeout, connection dropped after sending, or a row left in `sending` after its lease expired (worker crash) -> `send_unknown`. No automatic retry.
+  - `408` and `429` -> retry with backoff like `5xx` (the helpdesk did not process the request).
+  - Other `3xx` and `4xx` -> `send_failed` (terminal, no retry; redirects are never followed).
+  - Another `2xx` (`200`, `202`, `204`) -> `send_unknown`: the helpdesk may have stored the reply.
+  - **Ambiguous** (the request may have reached the helpdesk): read or write timeout, a read or write error, a connection dropped after sending, or a row left in `sending` after its lease expired (worker crash) -> `send_unknown`. No automatic retry.
 - The operator resolves `send_unknown` with **Mark delivered** (-> `sent`) or **Resend** (-> `approved`, a conscious choice).
 - `SEND_RETRY_AMBIGUOUS=true` (default `false`) retries ambiguous outcomes too. It is meant for receivers known to honor the `Idempotency-Key`, such as our mock.
 - **Guarantee, stated honestly.** Exactly-once delivery is impossible over HTTP when the outcome of a request is unknown. The service chooses at-most-once for ambiguous cases: it prefers one extra operator click to a duplicate reply. The cost is manual work proportional to the timeout rate (about 25 of 500 tickets at a 5% timeout rate).
-- `reply_url` is untrusted input (SSRF). At send time the host is resolved and the send is refused (`send_failed`) if it points to a private, loopback or link-local address, unless the host is in `REPLY_URL_ALLOWED_HOSTS` (compose sets `mock-helpdesk`). The webhook accepts any `reply_url`, so the sample payload is never rejected.
+- `reply_url` is untrusted input (SSRF). At send time the host is resolved and the send is refused (`send_failed`) if any of its addresses is not public (private, loopback, link-local, shared, reserved, multicast), unless the host is in `REPLY_URL_ALLOWED_HOSTS` (compose sets `mock-helpdesk`). The request then goes to the checked address with the original `Host` header and TLS server name, so a second DNS answer cannot redirect it (DNS rebinding). NAT64 prefixes (`64:ff9b::/96`, `64:ff9b:1::/48`) are not public either, because a NAT64 gateway forwards them to the embedded IPv4 address. Only `http` and `https` are accepted. A host that does not resolve is a definite failure and is retried. The webhook accepts any `reply_url`, so the sample payload is never rejected.
 
 ## 10. Operator UI
 
@@ -163,7 +166,7 @@ Transient generation failures return a row to `received`, and definite send fail
 
 ## 11. Mock helpdesk and simulator
 
-**Mock helpdesk** (`tools/mock_helpdesk`, built from `tools/Dockerfile`, own container): `POST /tickets/{id}/replies` returns `201`. Configurable chaos: `FAIL_5XX_RATE`, `TIMEOUT_RATE`, and `HANG_AFTER_STORE_RATE` (stores the reply, then never answers, to create the ambiguous case). It deduplicates on `Idempotency-Key` unless `HONOR_IDEMPOTENCY_KEY=false` (the mode a naive reviewer mock would have), stores every delivery, and exposes `GET /_debug/deliveries` with counts of unique and duplicate deliveries.
+**Mock helpdesk** (`tools/mock_helpdesk`, built from `tools/Dockerfile`, own container): `POST /tickets/{id}/replies` returns `201`. Configurable chaos: `FAIL_5XX_RATE`, `TIMEOUT_RATE`, and `HANG_AFTER_STORE_RATE` (stores the reply, then never answers, to create the ambiguous case). It deduplicates on `Idempotency-Key` unless `HONOR_IDEMPOTENCY_KEY=false` (the mode a naive reviewer mock would have), stores every delivery, and exposes `GET /_debug/deliveries` with counts of unique and duplicate deliveries, `POST /_debug/reset` to clear them between runs, and `GET /health`. Rates are drawn from one random number per request in the order 5xx, timeout (no store, then `504` after `HANG_SECONDS`), hang after store; they must add up to at most 1. A request without `Idempotency-Key` is `422`. `SEED` makes the draws repeatable.
 
 **Simulator** (`python -m simulator`): sends `--events N` webhooks over `--duration` seconds, with `--duplicate-rate` repeated events and `--concurrent-duplicates` simultaneous copies, using `reply_url` values that point to the mock. It reports webhook latency (p50, p95, max), error counts, time until `/api/stats` shows the queue drained, final status counts, and duplicate deliveries seen at the mock. Its output feeds `docs/REPORT.md`.
 
@@ -216,8 +219,8 @@ backend/
     llm/         client (interface), anthropic_client, keyless, guarded_client, factory,
                  call log and limiter (models, route, repository, service, limiter), schemas, exceptions
     drafting/    service, prompts, schemas
-    delivery/    helpdesk_client, outcome (classification), ssrf, service, exceptions
-    workers/     runner, generation_loop, send_loop, dependencies, __main__
+    delivery/    helpdesk_client, outcome (classification), ssrf, schemas, exceptions
+    workers/     runner, queue_loop (shared), generation_loop, send_loop, backoff, dependencies, __main__
   tests/         conftest, fakes, helpers, test_<module>.py
 
 frontend/

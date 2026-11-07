@@ -403,3 +403,100 @@ async def test_non_ascii_operator_credentials_work(migrated_schema: str) -> None
 
     assert ok.status_code == 200
     assert wrong.status_code == 401
+
+
+@pytest.mark.parametrize("action", ["mark-delivered", "resend"])
+async def test_unknown_send_actions_need_credentials_and_the_header(
+    db_client: AsyncClient,
+    session_factory: async_sessionmaker[AsyncSession],
+    action: str,
+) -> None:
+    row = await add_ticket(session_factory, TicketStatus.SEND_UNKNOWN)
+
+    anonymous = await db_client.post(
+        f"/api/tickets/{row.id}/{action}", headers=OPERATOR_HEADERS
+    )
+    cross_site = await act(db_client, row.id, action, headers={})
+
+    assert anonymous.status_code == 401
+    assert cross_site.status_code == 403
+    assert (await load(session_factory, row.id)).status == TicketStatus.SEND_UNKNOWN
+
+
+async def test_mark_delivered_settles_an_unknown_send(
+    db_client: AsyncClient, session_factory: async_sessionmaker[AsyncSession]
+) -> None:
+    row = await add_ticket(
+        session_factory, TicketStatus.SEND_UNKNOWN, last_error="ReadTimeout"
+    )
+
+    response = await act(db_client, row.id, "mark-delivered")
+
+    assert response.status_code == 200
+    stored = await load(session_factory, row.id)
+    assert stored.status == TicketStatus.SENT
+    assert stored.sent_at is not None
+    assert stored.last_error is None
+
+
+async def test_resend_requeues_an_unknown_send_at_once(
+    db_client: AsyncClient, session_factory: async_sessionmaker[AsyncSession]
+) -> None:
+    later = datetime.now(UTC) + timedelta(hours=1)
+    row = await add_ticket(
+        session_factory,
+        TicketStatus.SEND_UNKNOWN,
+        next_attempt_at=later,
+        locked_until=later,
+    )
+
+    response = await act(db_client, row.id, "resend")
+
+    assert response.status_code == 200
+    stored = await load(session_factory, row.id)
+    assert stored.status == TicketStatus.APPROVED
+    assert stored.next_attempt_at < later
+    assert stored.locked_until is None
+
+
+@pytest.mark.parametrize("action", ["mark-delivered", "resend"])
+@pytest.mark.parametrize(
+    "status",
+    [
+        TicketStatus.DRAFT_READY,
+        TicketStatus.APPROVED,
+        TicketStatus.SENDING,
+        TicketStatus.SENT,
+        TicketStatus.SEND_FAILED,
+    ],
+)
+async def test_only_an_unknown_send_can_be_resolved(
+    db_client: AsyncClient,
+    session_factory: async_sessionmaker[AsyncSession],
+    action: str,
+    status: TicketStatus,
+) -> None:
+    row = await add_ticket(session_factory, status)
+
+    response = await act(db_client, row.id, action)
+
+    assert response.status_code == 409
+    assert response.json()["payload"] == {"status": status.value}
+    assert (await load(session_factory, row.id)).status == status
+
+
+async def test_concurrent_mark_delivered_and_resend_leave_one_decision(
+    db_client: AsyncClient, session_factory: async_sessionmaker[AsyncSession]
+) -> None:
+    row = await add_ticket(session_factory, TicketStatus.SEND_UNKNOWN)
+
+    responses = await asyncio.gather(
+        *(
+            act(db_client, row.id, action)
+            for action in ["mark-delivered", "resend"] * 10
+        )
+    )
+
+    winners = [r.json()["status"] for r in responses if r.status_code == 200]
+    assert len(winners) == 1
+    assert (await load(session_factory, row.id)).status == winners[0]

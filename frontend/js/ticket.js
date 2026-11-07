@@ -47,13 +47,25 @@ function conflictText(error) {
   return `Someone already changed this ticket (now ${error.payload.status.replaceAll("_", " ")}).`;
 }
 
+const ACTIONS = {
+  draft_ready: [
+    { action: "approve", label: "Approve", className: "btn btn-success me-2" },
+    { action: "reject", label: "Reject", className: "btn btn-outline-danger" },
+  ],
+  send_unknown: [
+    { action: "mark-delivered", label: "Mark delivered", className: "btn btn-success me-2" },
+    { action: "resend", label: "Resend", className: "btn btn-outline-warning" },
+  ],
+};
+
 function actions(ticket) {
-  if (ticket.status !== "draft_ready") return [];
-  const approve = el("button", { className: "btn btn-success me-2", text: "Approve", attrs: { type: "button" } });
-  const reject = el("button", { className: "btn btn-outline-danger", text: "Reject", attrs: { type: "button" } });
+  const choices = ACTIONS[ticket.status];
+  if (!choices) return [];
+  const buttons = choices.map(({ label, className }) =>
+    el("button", { className, text: label, attrs: { type: "button" } }),
+  );
   const run = async (action) => {
-    approve.disabled = true;
-    reject.disabled = true;
+    for (const button of buttons) button.disabled = true;
     try {
       await postAction(`${path}/${action}`);
       notice.replaceChildren();
@@ -63,9 +75,10 @@ function actions(ticket) {
     }
     await load();
   };
-  approve.addEventListener("click", () => run("approve"));
-  reject.addEventListener("click", () => run("reject"));
-  return [el("div", { className: "mt-4" }, [approve, reject])];
+  choices.forEach(({ action }, index) => {
+    buttons[index].addEventListener("click", () => run(action));
+  });
+  return [el("div", { className: "mt-4" }, buttons)];
 }
 
 function render(ticket) {
@@ -77,7 +90,9 @@ function render(ticket) {
     warnings.push(
       el("div", {
         className: "alert alert-warning",
-        text: "The reply may already have reached the customer. Check the helpdesk before resending.",
+        text:
+          "The reply may already have reached the customer. Check the helpdesk: " +
+          "Mark delivered if it is there, Resend only if it is not.",
       }),
     );
   }

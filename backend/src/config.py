@@ -20,12 +20,23 @@ class Settings(BaseSettings):
     KEYLESS_DELAY_MAX_S: float = Field(default=30.0, ge=0)
     LLM_CONCURRENCY: int = Field(default=20, ge=1, le=100)
     PUBLIC_BASE_URL: str = "http://localhost:8080"
+    SEND_CONCURRENCY: int = Field(default=10, ge=1, le=100)
+    SEND_RETRY_AMBIGUOUS: bool = False
+    REPLY_URL_ALLOWED_HOSTS: str = ""
     OPERATOR_USER: str = DEFAULT_OPERATOR_USER
     OPERATOR_PASSWORD: SecretStr = SecretStr(DEFAULT_OPERATOR_PASSWORD)
     DATABASE_URL: str = "postgresql+asyncpg://postgres:postgres@db:5432/helpdesk"
     TEST_DATABASE_URL: str = (
         "postgresql+asyncpg://postgres:postgres@127.0.0.1:5434/helpdesk_test"
     )
+
+    @property
+    def reply_url_allowed_hosts(self) -> frozenset[str]:
+        return frozenset(
+            host.strip().lower()
+            for host in self.REPLY_URL_ALLOWED_HOSTS.split(",")
+            if host.strip()
+        )
 
     @model_validator(mode="after")
     def keyless_delay_bounds_are_ordered(self) -> "Settings":

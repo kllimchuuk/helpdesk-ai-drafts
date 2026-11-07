@@ -4,14 +4,16 @@ from datetime import timedelta
 from typing import Annotated, Any
 
 from fastapi import Depends
-from sqlalchemy import func, or_, select, update
+from sqlalchemy import ColumnElement, case, func, literal, or_, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.database import get_db, translate_unavailable
 from tickets.models import TicketEvent
-from tickets.schemas import ClaimedTicket
+from tickets.schemas import ClaimedSend, ClaimedTicket
 from tickets.status import TicketStatus
+
+STALE_SEND_ERROR = "lease_expired: the worker stopped during the send"
 
 
 class TicketRepository(ABC):
@@ -46,6 +48,44 @@ class TicketRepository(ABC):
         self, ticket_id: uuid.UUID, decision: TicketStatus
     ) -> TicketEvent | None:
         """Move a `draft_ready` ticket to `decision`; None if it was not ready."""
+        raise NotImplementedError()
+
+    @abstractmethod
+    async def resolve_unknown(
+        self, ticket_id: uuid.UUID, resolution: TicketStatus
+    ) -> TicketEvent | None:
+        """Move a `send_unknown` ticket to `sent` or back to `approved`."""
+        raise NotImplementedError()
+
+    @abstractmethod
+    async def claim_for_sending(
+        self, limit: int, lease_seconds: float
+    ) -> list[ClaimedSend]:
+        raise NotImplementedError()
+
+    @abstractmethod
+    async def expire_stale_sends(
+        self, *, retry_ambiguous: bool, max_attempts: int
+    ) -> int:
+        """Settle `sending` rows whose worker died; returns how many."""
+        raise NotImplementedError()
+
+    @abstractmethod
+    async def mark_sent(self, ticket: ClaimedSend) -> bool:
+        raise NotImplementedError()
+
+    @abstractmethod
+    async def retry_send(
+        self, ticket: ClaimedSend, *, delay_seconds: float, error: str
+    ) -> bool:
+        raise NotImplementedError()
+
+    @abstractmethod
+    async def fail_send(self, ticket: ClaimedSend, *, error: str) -> bool:
+        raise NotImplementedError()
+
+    @abstractmethod
+    async def park_unknown(self, ticket: ClaimedSend, *, error: str) -> bool:
         raise NotImplementedError()
 
     @abstractmethod
@@ -140,24 +180,39 @@ class TicketRepositoryImpl(TicketRepository):
     async def get(self, ticket_id: uuid.UUID) -> TicketEvent | None:
         return await self._session.get(TicketEvent, ticket_id)
 
-    @translate_unavailable
     async def review(
         self, ticket_id: uuid.UUID, decision: TicketStatus
     ) -> TicketEvent | None:
+        return await self._operator_transition(
+            ticket_id,
+            TicketStatus.DRAFT_READY,
+            status=decision,
+            reviewed_at=func.now(),
+            next_attempt_at=func.now(),
+            locked_until=None,
+        )
+
+    async def resolve_unknown(
+        self, ticket_id: uuid.UUID, resolution: TicketStatus
+    ) -> TicketEvent | None:
+        if resolution == TicketStatus.SENT:
+            values = {"sent_at": func.now(), "last_error": None}
+        else:
+            values = {"next_attempt_at": func.now(), "locked_until": None}
+        return await self._operator_transition(
+            ticket_id, TicketStatus.SEND_UNKNOWN, status=resolution, **values
+        )
+
+    @translate_unavailable
+    async def _operator_transition(
+        self, ticket_id: uuid.UUID, expected: TicketStatus, **values: Any
+    ) -> TicketEvent | None:
         # One conditional UPDATE: of any number of simultaneous clicks only the
-        # first finds the row in `draft_ready`, so a reply is approved once (I7).
+        # first finds the row in the expected status, so it changes once (I7).
         row = await self._session.scalar(
             update(TicketEvent)
-            .where(
-                TicketEvent.id == ticket_id,
-                TicketEvent.status == TicketStatus.DRAFT_READY,
-            )
-            .values(
-                status=decision,
-                reviewed_at=func.now(),
-                next_attempt_at=func.now(),
-                locked_until=None,
-            )
+            .where(TicketEvent.id == ticket_id, TicketEvent.status == expected)
+            .values(**values)
             .returning(TicketEvent)
         )
         await self._session.commit()
@@ -260,16 +315,154 @@ class TicketRepositoryImpl(TicketRepository):
             last_error=error,
         )
 
-    @translate_unavailable
     async def _finish_generation(self, ticket: ClaimedTicket, **values: Any) -> bool:
+        return await self._finish(
+            ticket.id,
+            TicketStatus.GENERATING,
+            TicketEvent.gen_attempts == ticket.attempt,
+            values,
+        )
+
+    @translate_unavailable
+    async def claim_for_sending(
+        self, limit: int, lease_seconds: float
+    ) -> list[ClaimedSend]:
+        due = (
+            select(TicketEvent.id)
+            .where(
+                TicketEvent.status == TicketStatus.APPROVED,
+                TicketEvent.next_attempt_at <= func.now(),
+                or_(
+                    TicketEvent.locked_until.is_(None),
+                    TicketEvent.locked_until < func.now(),
+                ),
+            )
+            .order_by(TicketEvent.next_attempt_at)
+            .limit(limit)
+            .with_for_update(skip_locked=True)
+        )
+        rows = await self._session.execute(
+            update(TicketEvent)
+            .where(TicketEvent.id.in_(due.scalar_subquery()))
+            .values(
+                status=TicketStatus.SENDING,
+                send_attempts=TicketEvent.send_attempts + 1,
+                locked_until=func.now() + timedelta(seconds=lease_seconds),
+            )
+            .returning(
+                TicketEvent.id,
+                TicketEvent.event_id,
+                TicketEvent.ticket_id,
+                TicketEvent.reply_url,
+                TicketEvent.draft_text,
+                TicketEvent.send_attempts,
+            )
+        )
+        claimed = [
+            ClaimedSend(
+                id=row.id,
+                event_id=row.event_id,
+                ticket_id=row.ticket_id,
+                reply_url=row.reply_url,
+                reply=row.draft_text,
+                attempt=row.send_attempts,
+            )
+            for row in rows
+        ]
+        await self._session.commit()
+        return claimed
+
+    @translate_unavailable
+    async def expire_stale_sends(
+        self, *, retry_ambiguous: bool, max_attempts: int
+    ) -> int:
+        # A `sending` row whose lease expired belongs to a worker that died during
+        # the request, which may have reached the helpdesk: it is never put back
+        # in the queue unless ambiguous outcomes are allowed to retry (I6), and
+        # then only below the attempt cap, so a send that keeps killing its
+        # worker stops.
+        status: Any = TicketStatus.SEND_UNKNOWN
+        if retry_ambiguous:
+            status = case(
+                (
+                    TicketEvent.send_attempts < max_attempts,
+                    literal(TicketStatus.APPROVED.value),
+                ),
+                else_=literal(TicketStatus.SEND_UNKNOWN.value),
+            )
+        rows = await self._session.execute(
+            update(TicketEvent)
+            .where(
+                TicketEvent.status == TicketStatus.SENDING,
+                TicketEvent.locked_until < func.now(),
+            )
+            .values(
+                status=status,
+                next_attempt_at=func.now(),
+                locked_until=None,
+                last_error=STALE_SEND_ERROR,
+            )
+            .returning(TicketEvent.id)
+        )
+        expired = len(rows.all())
+        await self._session.commit()
+        return expired
+
+    async def mark_sent(self, ticket: ClaimedSend) -> bool:
+        return await self._finish_send(
+            ticket,
+            status=TicketStatus.SENT,
+            sent_at=func.now(),
+            locked_until=None,
+            last_error=None,
+        )
+
+    async def retry_send(
+        self, ticket: ClaimedSend, *, delay_seconds: float, error: str
+    ) -> bool:
+        return await self._finish_send(
+            ticket,
+            status=TicketStatus.APPROVED,
+            next_attempt_at=func.now() + timedelta(seconds=delay_seconds),
+            locked_until=None,
+            last_error=error,
+        )
+
+    async def fail_send(self, ticket: ClaimedSend, *, error: str) -> bool:
+        return await self._finish_send(
+            ticket, status=TicketStatus.SEND_FAILED, locked_until=None, last_error=error
+        )
+
+    async def park_unknown(self, ticket: ClaimedSend, *, error: str) -> bool:
+        return await self._finish_send(
+            ticket,
+            status=TicketStatus.SEND_UNKNOWN,
+            locked_until=None,
+            last_error=error,
+        )
+
+    async def _finish_send(self, ticket: ClaimedSend, **values: Any) -> bool:
+        return await self._finish(
+            ticket.id,
+            TicketStatus.SENDING,
+            TicketEvent.send_attempts == ticket.attempt,
+            values,
+        )
+
+    @translate_unavailable
+    async def _finish(
+        self,
+        ticket_id: uuid.UUID,
+        stage: TicketStatus,
+        same_attempt: ColumnElement[bool],
+        values: dict[str, Any],
+    ) -> bool:
         # Compare-and-set on the attempt: a worker whose lease expired and was
         # taken over cannot overwrite what the new owner writes.
         row = await self._session.execute(
             update(TicketEvent)
             .where(
-                TicketEvent.id == ticket.id,
-                TicketEvent.status == TicketStatus.GENERATING,
-                TicketEvent.gen_attempts == ticket.attempt,
+                TicketEvent.id == ticket_id, TicketEvent.status == stage, same_attempt
             )
             .values(**values)
             .returning(TicketEvent.id)

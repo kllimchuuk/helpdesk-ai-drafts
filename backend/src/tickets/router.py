@@ -61,3 +61,27 @@ async def reject(
     service: Annotated[TicketService, Depends(get_ticket_service)],
 ) -> TicketDetail:
     return await service.reject(ticket_id)
+
+
+@operator_router.post(
+    "/{ticket_id}/mark-delivered",
+    response_model=TicketDetail,
+    dependencies=[Depends(require_operator_ui)],
+)
+async def mark_delivered(
+    ticket_id: str,
+    service: Annotated[TicketService, Depends(get_ticket_service)],
+) -> TicketDetail:
+    return await service.mark_delivered(ticket_id)
+
+
+@operator_router.post(
+    "/{ticket_id}/resend",
+    response_model=TicketDetail,
+    dependencies=[Depends(require_operator_ui)],
+)
+async def resend(
+    ticket_id: str,
+    service: Annotated[TicketService, Depends(get_ticket_service)],
+) -> TicketDetail:
+    return await service.resend(ticket_id)

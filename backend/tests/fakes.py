@@ -1,6 +1,10 @@
 import asyncio
+import random
 import uuid
+from collections import Counter
 from collections.abc import Awaitable, Callable
+
+import httpx
 
 from llm.client import LLMClient
 from llm.schemas import LLMRequest, LLMResult
@@ -71,3 +75,54 @@ class MissingReviewRepository:
 
     async def get(self, ticket_id: uuid.UUID) -> TicketEvent | None:
         return self.current
+
+
+class FakeHelpdesk:
+    """An httpx transport handler that stores replies and injects failures.
+
+    `hang_after_store_rate` stores the reply and then fails the read, which is
+    what the sender sees when the helpdesk saved the reply but never answered.
+    """
+
+    def __init__(
+        self,
+        *,
+        fail_5xx_rate: float = 0.0,
+        hang_after_store_rate: float = 0.0,
+        honor_idempotency_key: bool = True,
+        status: int = 201,
+        seed: int = 7,
+        on_request: Callable[[httpx.Request], Awaitable[None]] | None = None,
+    ) -> None:
+        self.fail_5xx_rate = fail_5xx_rate
+        self.hang_after_store_rate = hang_after_store_rate
+        self.honor_idempotency_key = honor_idempotency_key
+        self.status = status
+        self.on_request = on_request
+        self.requests: list[httpx.Request] = []
+        self.deliveries: Counter[str] = Counter()
+        self.hung: set[str] = set()
+        self._random = random.Random(seed)
+
+    async def __call__(self, request: httpx.Request) -> httpx.Response:
+        self.requests.append(request)
+        if self.on_request is not None:
+            await self.on_request(request)
+        key = request.headers["idempotency-key"]
+        if self._random.random() < self.fail_5xx_rate:
+            return httpx.Response(503)
+        if self.status != 201:
+            return httpx.Response(self.status)
+        if not (self.honor_idempotency_key and self.deliveries[key]):
+            self.deliveries[key] += 1
+        if self._random.random() < self.hang_after_store_rate:
+            self.hung.add(key)
+            raise httpx.ReadTimeout("the helpdesk stored the reply and hung")
+        return httpx.Response(201)
+
+
+def resolve_to(*addresses: str) -> Callable[[str, int], Awaitable[list[str]]]:
+    async def resolve(host: str, port: int) -> list[str]:
+        return list(addresses)
+
+    return resolve
