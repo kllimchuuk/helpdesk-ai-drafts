@@ -132,7 +132,7 @@ Options: `--events`, `--duration` (seconds), `--duplicate-rate` and `--concurren
 
 The stack runs without `ANTHROPIC_API_KEY` in keyless mode (I8). The public webhook is `POST http://<server-ip>/webhooks/helpdesk`; replies go to the `reply_url` of each event, and a `reply_url` that resolves to a private address is refused. To try the full loop on the server, start the demo receiver with `REPLY_URL_ALLOWED_HOSTS=mock-helpdesk` in `.env` and `docker compose -f docker-compose.prod.yml --profile demo up -d`, and use `http://mock-helpdesk:8000/tickets/<id>/replies` as `reply_url`.
 
-There is no TLS: the operator's Basic Auth password travels in clear text over HTTP (DECISIONS, S9). Use a strong password, and put the stack behind HTTPS before real use.
+nginx limits the public endpoints per client address: the webhook to 10 requests a second (burst 20) and the operator API to 20 a second (burst 40), answering `429` above that, and refuses bodies above 256 KB (`413`). A helpdesk that retries on a non-2xx answer loses nothing. There is no TLS: the operator's Basic Auth password travels in clear text over HTTP (DECISIONS, S9). Use a strong password, and put the stack behind HTTPS before real use.
 
 ## Develop
 

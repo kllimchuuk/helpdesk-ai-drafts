@@ -241,7 +241,7 @@ Rules, taken from `cadence`:
 4. All SQL lives in repositories, including `SKIP LOCKED`, `ON CONFLICT`, advisory locks and atomic status transitions. A repository holds only queries: no branches, loops, defaults for missing data or mapping of rows to domain objects; it returns entities, rows or scalars and the service decides and maps; its methods take plain arguments (no `*`, `*args`, `**kwargs` or keyword-only markers). `test_repositories_hold_no_logic.py` enforces both.
 5. No database transaction stays open during a provider call or a helpdesk call: claim in one short transaction, work outside it, save the result in another.
 6. Tests run against a real Postgres. The test database name must end with `_test` and differ from the development one; each test starts from empty tables (`TRUNCATE`), because the concurrency tests need real commits across connections. Fakes (`FakeLLMClient`, failing and flaky variants) live in `tests/fakes.py`.
-7. Code has no comments except the few that explain a non-obvious reason, such as why a lock or a lease exists.
+7. Code has no comments (`test_no_comments.py`); tool directives such as `# noqa` are allowed, and the reason for a lock, a lease or a fence is written in this SPEC or in DECISIONS.
 
 Branches. One branch per slice, named by commit type (`feat/webhook-idempotency`, `docs/spec-and-agent-config`, `fix/review-findings`), merged into `main` through a pull request with a merge commit, never squash, so the history stays as written. `main` stays green and the VPS pulls only `main`. The pull request description is the report from the `report` skill.
 

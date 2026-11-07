@@ -54,7 +54,7 @@ def is_public(address: str) -> bool:
         ip = ip.ipv4_mapped
     if any(ip in network for network in NAT64_NETWORKS):
         return False
-    return ip.is_global and not ip.is_multicast
+    return ip.is_global and not ip.is_multicast and not ip.is_reserved
 
 
 def default_port(scheme: str) -> int:

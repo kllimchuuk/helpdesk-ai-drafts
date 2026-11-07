@@ -52,3 +52,23 @@ def test_nginx_serves_kb_links_and_sends_a_strict_policy() -> None:
     assert "try_files /kb.html =404;" in config
     assert "script-src 'self';" in config
     assert "frame-ancestors 'none'" in config
+
+
+def test_nginx_limits_the_public_endpoints_and_the_body_size() -> None:
+    config = (FRONTEND / "nginx.conf").read_text()
+
+    assert "limit_req_zone $binary_remote_addr zone=webhooks:" in config
+    assert "limit_req_zone $binary_remote_addr zone=operator_api:" in config
+    assert "limit_req_status 429;" in config
+    assert re.search(r"location /webhooks/ \{[^}]*limit_req zone=webhooks", config)
+    assert re.search(r"location /api/ \{[^}]*limit_req zone=operator_api", config)
+    assert re.search(r"client_max_body_size \d+k;", config)
+
+
+def test_nginx_sends_the_health_check_to_the_backend_without_a_limit() -> None:
+    config = (FRONTEND / "nginx.conf").read_text()
+
+    health = re.search(r"location = /health \{([^}]*)\}", config)
+    assert health is not None
+    assert "proxy_pass http://backend:8000;" in health[1]
+    assert "limit_req" not in health[1]

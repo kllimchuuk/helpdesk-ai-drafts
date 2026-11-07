@@ -78,6 +78,11 @@ class TicketRepository(ABC):
         raise NotImplementedError()
 
     @abstractmethod
+    async def park_exhausted_stale_sends(self, max_attempts: int, error: str) -> int:
+        """Like `park_stale_sends`, only for rows with `max_attempts` or more."""
+        raise NotImplementedError()
+
+    @abstractmethod
     async def mark_sent(self, ticket: ClaimedSend) -> bool:
         raise NotImplementedError()
 
@@ -370,6 +375,13 @@ class TicketRepositoryImpl(TicketRepository):
 
     async def park_stale_sends(self, error: str) -> int:
         return await self._settle_stale_sends(TicketStatus.SEND_UNKNOWN, error, true())
+
+    async def park_exhausted_stale_sends(self, max_attempts: int, error: str) -> int:
+        return await self._settle_stale_sends(
+            TicketStatus.SEND_UNKNOWN,
+            error,
+            TicketEvent.send_attempts >= max_attempts,
+        )
 
     @translate_unavailable
     async def _settle_stale_sends(

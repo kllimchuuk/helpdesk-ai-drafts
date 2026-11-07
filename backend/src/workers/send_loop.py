@@ -51,7 +51,11 @@ class SendLoop(QueueLoop[ClaimedSend]):
             await tickets.requeue_stale_sends(
                 max_attempts=self._policy.max_attempts, error=STALE_SEND_ERROR
             )
-        await tickets.park_stale_sends(error=STALE_SEND_ERROR)
+            await tickets.park_exhausted_stale_sends(
+                max_attempts=self._policy.max_attempts, error=STALE_SEND_ERROR
+            )
+        else:
+            await tickets.park_stale_sends(error=STALE_SEND_ERROR)
         rows = await tickets.claim_for_sending(limit, self._policy.lease_seconds)
         return [claimed_send(row) for row in rows]
 

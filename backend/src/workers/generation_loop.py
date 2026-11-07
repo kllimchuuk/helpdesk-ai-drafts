@@ -127,6 +127,9 @@ class GenerationLoop(QueueLoop[ClaimedTicket]):
             except DatabaseUnavailableError:
                 log(logging.WARNING, "Database unavailable, heartbeat missed", ticket)
                 continue
+            except Exception:
+                log(logging.ERROR, "Heartbeat failed", ticket, exc_info=True)
+                continue
             if not extended:
                 log(logging.WARNING, "Lease lost during generation", ticket)
                 return

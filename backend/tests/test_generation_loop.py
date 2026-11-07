@@ -330,6 +330,49 @@ async def test_the_heartbeat_keeps_a_slow_ticket_with_its_worker(
         await other.shutdown()
 
 
+async def test_a_heartbeat_that_fails_once_does_not_lose_the_lease(
+    session_factory: async_sessionmaker[AsyncSession],
+    loaded_kb: None,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    await insert_events(session_factory)
+    real_extend = TicketRepositoryImpl.extend_generation_lease
+    calls = 0
+
+    async def flaky_extend(self, ticket, lease_seconds):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise RuntimeError("heartbeat broke")
+        return await real_extend(self, ticket, lease_seconds)
+
+    monkeypatch.setattr(TicketRepositoryImpl, "extend_generation_lease", flaky_extend)
+    started = asyncio.Event()
+
+    async def note_start(request: LLMRequest) -> None:
+        started.set()
+
+    slow_llm = FakeLLMClient(delay=FAST.lease_seconds * 2.5, on_call=note_start)
+    slow = Worker(session_factory, slow_llm)
+    await asyncio.wait_for(started.wait(), timeout=5)
+    other_llm = FakeLLMClient()
+    other = Worker(session_factory, other_llm)
+    try:
+        [row] = await wait_until(
+            session_factory,
+            all_in(TicketStatus.DRAFT_READY, TicketStatus.GENERATION_FAILED),
+        )
+    finally:
+        await slow.shutdown()
+        await other.shutdown()
+
+    assert row.status == TicketStatus.DRAFT_READY
+    assert row.gen_attempts == 1
+    assert other_llm.requests == []
+    assert "task crashed" not in caplog.text
+
+
 async def test_a_ticket_whose_worker_died_on_every_attempt_fails_without_a_call(
     session_factory: async_sessionmaker[AsyncSession], loaded_kb: None
 ) -> None:

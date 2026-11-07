@@ -9,9 +9,14 @@ from datetime import timedelta
 
 import httpx
 from httpx import AsyncClient
-from sqlalchemy import func, select, update
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy import func, select, text, update
+from sqlalchemy.ext.asyncio import (
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
+)
 
+from core.database import build_session_factory
 from delivery.helpdesk_client import HelpdeskClient, build_http_client
 from tests.fakes import FakeHelpdesk, resolve_to
 from tests.helpers import sample_event
@@ -266,6 +271,49 @@ async def test_an_unexpected_error_while_sending_is_treated_as_ambiguous(
     assert row.last_error == INTERNAL_ERROR
 
 
+async def test_no_transaction_is_open_while_the_helpdesk_is_called(
+    session_factory: async_sessionmaker[AsyncSession], migrated_schema: str
+) -> None:
+    """Only the sender's own connections count, not the test's poller."""
+    await approved_tickets(session_factory, 3)
+    sender_engine = create_async_engine(
+        migrated_schema,
+        connect_args={
+            "server_settings": {
+                "timezone": "UTC",
+                "application_name": "sender-under-test",
+            }
+        },
+    )
+    observed: list[int] = []
+
+    async def count_open_transactions(request: httpx.Request) -> None:
+        async with session_factory() as session:
+            observed.append(
+                await session.scalar(
+                    text(
+                        "SELECT count(*) FROM pg_stat_activity "
+                        "WHERE datname = current_database() "
+                        "AND application_name = 'sender-under-test' "
+                        "AND state LIKE 'idle in transaction%'"
+                    )
+                )
+            )
+
+    sender = Sender(
+        build_session_factory(sender_engine),
+        FakeHelpdesk(on_request=count_open_transactions),
+        replace(FAST, concurrency=1),
+    )
+    try:
+        await wait_until(session_factory, all_settled)
+    finally:
+        await sender.shutdown()
+        await sender_engine.dispose()
+
+    assert observed == [0, 0, 0]
+
+
 async def test_chaos_never_delivers_a_reply_twice(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
@@ -311,6 +359,30 @@ async def test_a_worker_killed_mid_send_leaves_the_reply_unknown(
     assert row.status == TicketStatus.SEND_UNKNOWN
     assert row.last_error.startswith("lease_expired")
     assert helpdesk.requests == []
+
+
+async def test_a_send_killed_mid_flight_is_retried_when_ambiguity_may_retry(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    await approved_tickets(session_factory)
+    arrived = asyncio.Event()
+
+    async def hang(request: httpx.Request) -> None:
+        arrived.set()
+        await asyncio.Event().wait()
+
+    crashed = Sender(session_factory, FakeHelpdesk(on_request=hang))
+    await asyncio.wait_for(arrived.wait(), timeout=5)
+    await crashed.kill()
+
+    helpdesk = FakeHelpdesk()
+    [row] = await run_to_end(
+        session_factory, helpdesk, replace(FAST, retry_ambiguous=True)
+    )
+
+    assert row.status == TicketStatus.SENT
+    assert row.send_attempts == 2
+    assert len(helpdesk.requests) == 1
 
 
 async def test_twenty_simultaneous_approves_send_exactly_once(

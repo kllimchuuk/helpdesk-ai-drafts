@@ -352,8 +352,27 @@ async def test_an_expired_send_at_the_cap_is_not_requeued_and_is_then_parked(
         requeued = await repository.requeue_stale_sends(
             max_attempts=1, error=STALE_SEND_ERROR
         )
-        await repository.park_stale_sends(error=STALE_SEND_ERROR)
+        await repository.park_exhausted_stale_sends(
+            max_attempts=1, error=STALE_SEND_ERROR
+        )
 
     assert requeued == 0
     assert (await load(session_factory, send.id)).status == TicketStatus.SEND_UNKNOWN
     assert await claim_sends(session_factory) == []
+
+
+async def test_parking_exhausted_sends_leaves_an_expired_send_below_the_cap(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    await insert_events(session_factory, 1)
+    await approve_all(session_factory)
+    [send] = await claim_sends(session_factory)
+    await expire_leases(session_factory)
+
+    async with session_factory() as session:
+        parked = await TicketRepositoryImpl(session).park_exhausted_stale_sends(
+            max_attempts=8, error=STALE_SEND_ERROR
+        )
+
+    assert parked == 0
+    assert (await load(session_factory, send.id)).status == TicketStatus.SENDING
