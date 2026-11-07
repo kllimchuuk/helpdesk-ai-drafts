@@ -1,0 +1,168 @@
+import asyncio
+import random
+import time
+import uuid
+from dataclasses import dataclass
+
+import httpx
+
+from simulator.report import RunReport, is_drained
+
+MESSAGES = (
+    "Не можу експортувати звіт у PDF",
+    "Забув пароль, як відновити доступ до акаунта?",
+    "Скажіть, як змінити тариф і де знайти рахунок за минулий місяць",
+    "Хочу додати нового колегу в команду і дати йому права редактора",
+    "Отримую помилку 429 при запитах до вашого API",
+    "Як зробити, щоб звіт щотижня автоматично приходив мені на пошту?",
+    "Після експорту в CSV українські літери відображаються нерозбірливо",
+    "Мені не приходить код двофакторної автентифікації, не можу увійти",
+    "Яка завтра погода у Львові на вихідних?",
+)
+OPERATOR_HEADERS = {"X-Requested-By": "operator-ui", "Content-Type": "application/json"}
+
+
+@dataclass(frozen=True)
+class Options:
+    base_url: str
+    mock_url: str
+    reply_host: str
+    events: int
+    duration: float
+    duplicate_rate: float
+    concurrent_duplicates: int
+    approve: bool
+    operator: tuple[str, str]
+    drain_timeout: float
+    seed: int | None = None
+
+
+def build_event(run_id: str, index: int, options: Options, pick) -> dict[str, str]:
+    ticket_id = f"SIM-{run_id}-{index}"
+    return {
+        "event_id": f"evt_{run_id}_{index}",
+        "ticket_id": ticket_id,
+        "customer_email": f"customer{index}@example.com",
+        "message": pick(MESSAGES),
+        "reply_url": f"http://{options.reply_host}/tickets/{ticket_id}/replies",
+    }
+
+
+def copies_for(draw: float, options: Options) -> int:
+    if draw < options.duplicate_rate:
+        return max(2, options.concurrent_duplicates)
+    return 1
+
+
+async def send_webhook(
+    http: httpx.AsyncClient, event: dict[str, str], report: RunReport
+) -> None:
+    started = time.perf_counter()
+    try:
+        response = await http.post("/webhooks/helpdesk", json=event)
+        outcome = (
+            response.json().get("status", f"http_{response.status_code}")
+            if response.status_code == 200
+            else f"http_{response.status_code}"
+        )
+    except httpx.HTTPError as error:
+        outcome = type(error).__name__
+    report.record(event["event_id"], outcome, (time.perf_counter() - started) * 1000)
+
+
+async def send_events(
+    http: httpx.AsyncClient, options: Options, report: RunReport, run_id: str
+) -> None:
+    rng = random.Random(options.seed)
+    interval = options.duration / max(options.events, 1)
+    started = time.monotonic()
+    pending: set[asyncio.Task[None]] = set()
+    for index in range(options.events):
+        delay = started + index * interval - time.monotonic()
+        if delay > 0:
+            await asyncio.sleep(delay)
+        event = build_event(run_id, index, options, rng.choice)
+        for _ in range(copies_for(rng.random(), options)):
+            task = asyncio.create_task(send_webhook(http, event, report))
+            pending.add(task)
+            task.add_done_callback(pending.discard)
+        report.events += 1
+    await asyncio.gather(*pending)
+
+
+async def approve_drafts(
+    http: httpx.AsyncClient,
+    options: Options,
+    report: RunReport,
+    run_id: str,
+    stop: asyncio.Event,
+) -> None:
+    prefix = f"SIM-{run_id}-"
+    while not stop.is_set():
+        response = await http.get(
+            "/api/tickets",
+            params={"status": "draft_ready", "limit": 1000},
+            auth=options.operator,
+        )
+        response.raise_for_status()
+        for ticket in response.json()["items"]:
+            if not ticket["ticket_id"].startswith(prefix):
+                continue
+            approved = await http.post(
+                f"/api/tickets/{ticket['id']}/approve",
+                content="{}",
+                headers=OPERATOR_HEADERS,
+                auth=options.operator,
+            )
+            if approved.status_code == 200:
+                report.approved += 1
+        try:
+            await asyncio.wait_for(stop.wait(), timeout=1.0)
+        except TimeoutError:
+            pass
+
+
+async def wait_for_drain(
+    http: httpx.AsyncClient, options: Options, report: RunReport
+) -> None:
+    started = time.monotonic()
+    while time.monotonic() - started < options.drain_timeout:
+        stats = (await http.get("/api/stats")).json()
+        report.final_counts = stats["counts"]
+        if is_drained(stats["counts"], options.approve):
+            report.drain_seconds = time.monotonic() - started
+            return
+        await asyncio.sleep(1.0)
+
+
+async def run(
+    options: Options,
+    *,
+    transport: httpx.AsyncBaseTransport | None = None,
+    mock_transport: httpx.AsyncBaseTransport | None = None,
+) -> RunReport:
+    report = RunReport()
+    run_id = uuid.uuid4().hex[:8]
+    timeout = httpx.Timeout(10.0)
+    async with (
+        httpx.AsyncClient(
+            base_url=options.base_url, timeout=timeout, transport=transport
+        ) as http,
+        httpx.AsyncClient(
+            base_url=options.mock_url, timeout=timeout, transport=mock_transport
+        ) as mock,
+    ):
+        await mock.post("/_debug/reset")
+        stop = asyncio.Event()
+        approver = (
+            asyncio.create_task(approve_drafts(http, options, report, run_id, stop))
+            if options.approve
+            else None
+        )
+        await send_events(http, options, report, run_id)
+        await wait_for_drain(http, options, report)
+        stop.set()
+        if approver is not None:
+            await approver
+        report.deliveries = (await mock.get("/_debug/deliveries")).json()
+    return report

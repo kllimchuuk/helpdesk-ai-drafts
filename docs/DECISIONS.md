@@ -260,3 +260,12 @@ Review findings (reviewer pass 1, "Fix before merge": two important, two minor, 
 23. **NAT64 addresses are not public.** Python counts `64:ff9b::/96` as global, but on a network with a NAT64 gateway it reaches the embedded IPv4 address, which may be private. Both NAT64 prefixes are refused; the test fails without the check for `64:ff9b::/96`.
 24. **The mock's `SEED` is documented** (SPEC §11, `.env.example`, compose) and SPEC §13 lists the real files of `delivery/` and `workers/`.
 25. **Known limit, not changed: stopping the worker cancels sends in flight**, including ones still resolving DNS that certainly never left; after the lease they are `send_unknown` and need an operator click. This errs on the safe side of I6. With a deploy every few hours and 10 sends at most in flight it is a handful of clicks.
+
+## 2026-11-07 - Simulator and measured run (slice S7)
+
+Basis: implementation of S7 (`feat/simulator`). Choices by the agent where SPEC §11 is silent. **Recommendation**, in effect once the owner merges the slice.
+
+1. **The simulator can approve its own drafts (`--approve`).** Without an operator nothing reaches the send path, so neither I6 nor the "time until drained" could be measured. It approves only tickets whose id starts with its run prefix, through the same operator API and CSRF header as the UI. Changed: SPEC §11.
+2. **A duplicated event is sent as `--concurrent-duplicates` simultaneous copies** (default 3) for a `--duplicate-rate` fraction of events (default 0.1), which tests the concurrent case of I2 under load; a dedupe error is an event accepted more than once or never.
+3. **Latency is measured per webhook request at the client** (`perf_counter` around the POST), percentiles by nearest rank. "Drained" is measured from the last webhook.
+4. **The simulator lives in `tools/` with the mock and shares its image;** `httpx` moves to the tools' runtime dependencies. Compose has a `simulator` service in the `tools` profile, so `docker compose up` does not start it and `docker compose run --rm simulator ...` does. It never imports backend code.
