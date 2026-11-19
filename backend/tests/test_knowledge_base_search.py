@@ -1,4 +1,5 @@
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from sqlalchemy import func, select
@@ -341,3 +342,27 @@ async def test_unusual_unicode_does_not_break_the_search(
         matches = await service(session).search(query)
 
     assert matches == []
+
+
+async def test_the_repository_returns_raw_rows_and_the_service_maps_them(
+    loaded_kb: None,
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    async with session_factory() as session:
+        rows = await KbRepositoryImpl(session).score_articles(["pdf", "звіт"], 0.5)
+
+    assert len(rows) == 8
+    assert not any(isinstance(row, ArticleScore) for row in rows)
+    assert {"slug", "title", "trigram_score", "fts_score", "strong_words"} <= set(
+        rows[0]._fields
+    )
+
+
+async def test_the_service_turns_raw_rows_into_matches() -> None:
+    row = SimpleNamespace(
+        slug="a", title="A", trigram_score=0.9, fts_score=0.0, strong_words=0
+    )
+
+    matches = await KbService(FixedScores([row]), min_score=0.1).search("звіт pdf")
+
+    assert [match.slug for match in matches] == ["a"]

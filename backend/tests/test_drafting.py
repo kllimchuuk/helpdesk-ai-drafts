@@ -24,7 +24,7 @@ def drafting(
 
 
 def answer(reply: str = "Відкрийте звіт.", cited: list[str] | None = None):
-    return LLMResult(reply=reply, cited_slugs=cited or [], is_static=False)
+    return LLMResult(reply=reply, cited_slugs=tuple(cited or []), is_static=False)
 
 
 async def test_a_matching_ticket_is_grounded_in_the_article_and_linked(
@@ -83,7 +83,7 @@ async def test_with_no_citation_every_retrieved_article_is_linked(
 async def test_a_static_reply_is_flagged_as_static(
     session_factory: async_sessionmaker[AsyncSession], loaded_kb: None
 ) -> None:
-    llm = FakeLLMClient(LLMResult(reply="Static.", cited_slugs=[], is_static=True))
+    llm = FakeLLMClient(LLMResult(reply="Static.", cited_slugs=(), is_static=True))
 
     draft = await drafting(session_factory, llm).draft(PDF_TICKET)
 

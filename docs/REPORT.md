@@ -115,6 +115,38 @@ docker compose exec -T db psql -U postgres -d helpdesk -tAc \
 - At the kill: 10 `sending`, 50 `draft_ready`; the mock had stored 10 replies.
 - 116 s after the restart: all 10 `send_unknown` with `lease_expired: the worker stopped during the send`, `send_attempts` 1. The mock still counted 10 deliveries, 10 unique, 0 duplicates: nothing was sent again.
 
+## Final checks on the merged `main` (2026-11-07, after the review fixes)
+
+The runs above were measured before the review refactors, so the main paths were checked again on the merged code, first locally and then on the public server.
+
+**Locally**, a clean compose project with no `.env` at `5470e1c` (the code of `main` at `9595d9f` differs from it only by the merge), frontend and mock on other ports, driven by `curl` and by `docker compose run --rm simulator --events 60 --duration 30 --duplicate-rate 0.1 --approve --seed 7`:
+
+| Check | Result |
+|---|---|
+| `/health` | `200`, body `OK` |
+| Webhook, a new event and its repeat | accepted in 41 ms, `duplicate` in 6 ms |
+| 15 simultaneous identical webhooks | 1 `accepted`, 14 `duplicate`, 1 row |
+| Drafts (keyless) | ready 14 s and 28 s after the webhook, `draft_is_static` true, 3 KB links in the text |
+| Approve, repeat, no CSRF header | `200`, `409`, `403`; two replies sent, the mock counted 2 deliveries, 2 unique, 0 duplicates; a rejected ticket was not sent |
+| Mock that stores the reply and hangs | `send_unknown` (`ReadTimeout`), the mock stored 1 reply; Mark delivered gave `sent` with `send_attempts` 1, nothing was sent again |
+| 80 simultaneous webhooks, and a 300 KB body | 22 `200` and 58 `429`; the body gave `413` |
+| Simulator, 60 events (84 requests) | webhook latency p50 11.2 ms, p95 16.6 ms, max 40.5 ms; 60 `accepted`, 24 `duplicate`, 0 dedupe errors; 60 approved, 60 deliveries, 60 unique, 0 duplicates; drained 59.9 s after the last webhook; exit status 0 |
+| Provider-call window | at most 55 calls in any 60 s, 64 `keyless` rows for 64 tickets, no retries |
+
+**On the public server** (Ubuntu 24.04, 2 CPUs, 3.8 GB, `docker-compose.prod.yml --profile demo`, code at `9595d9f`, no API key), from another machine:
+
+| Check | Result |
+|---|---|
+| `/health`, `/`, `/ticket.html`, `/kb/reset-password` | `200`, body `OK` for health |
+| `/api/tickets` without a login, and with `operator/operator` | `401`, `401` |
+| Ports 5432, 8000 and 8090 | closed; only port 80 answers |
+| Security headers | `Content-Security-Policy`, `X-Content-Type-Options`, `Referrer-Policy` present |
+| Webhook and its repeat | `accepted` in 123 ms, `duplicate` in 112 ms (network included) |
+| Draft | ready after about 22 s, static, links on `http://204.168.225.127/kb/...` |
+| Approve with the server's operator login | `200`, then `sent` with `send_attempts` 1; the demo helpdesk counted 1 delivery, 1 unique, 0 duplicates |
+
+The commands: `curl` against the addresses above, `curl -u` with the operator login on the server for the approve step, `docker compose -f docker-compose.prod.yml exec mock-helpdesk` for the delivery counts, and `nc -z` for the closed ports. Each figure is from one run.
+
 ## What these runs do not show
 
 - The provider was never called with a real key, so structured output, refusals and real latency of Claude are covered only by tests with a mocked transport (S3).

@@ -38,7 +38,6 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    # pg_trgm stays installed: other objects in the database may depend on it.
     op.drop_index(
         "ix_kb_articles_tsv", table_name="kb_articles", postgresql_using="gin"
     )

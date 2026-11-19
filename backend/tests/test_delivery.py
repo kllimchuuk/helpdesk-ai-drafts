@@ -172,6 +172,8 @@ async def test_transport_errors_are_definite_only_before_sending(
         "fc00::1",
         "::ffff:127.0.0.1",
         "::ffff:10.0.0.1",
+        "::127.0.0.1",
+        "::a00:1",
     ],
 )
 async def test_a_private_address_is_refused_without_a_request(address: str) -> None:

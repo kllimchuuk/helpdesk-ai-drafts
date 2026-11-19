@@ -45,6 +45,4 @@ def build_request(message: str, articles: list[ParsedArticle]) -> LLMRequest:
 
 
 def fence(text: str) -> str:
-    # A customer could close the delimiter and write "instructions" after it;
-    # breaking every delimiter-like tag keeps the untrusted text inside its block.
     return DELIMITER_PATTERN.sub(lambda match: "‹" + match.group(0)[1:], text)

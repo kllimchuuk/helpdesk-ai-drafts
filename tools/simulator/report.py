@@ -113,7 +113,6 @@ def problems(summary: dict[str, object]) -> list[str]:
         found.append("the queue did not drain")
     duplicates = summary["mock_deliveries"].get("duplicates")
     if duplicates is None:
-        # Without the counts the I6 check would pass without checking anything.
         found.append("the mock's delivery counts are missing")
     elif duplicates:
         found.append(f"duplicate deliveries at the mock: {duplicates}")

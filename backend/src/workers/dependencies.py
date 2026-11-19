@@ -10,8 +10,6 @@ from llm.factory import build_llm_client
 from workers.generation_loop import GenerationLoop, GenerationPolicy
 from workers.send_loop import SendLoop, SendPolicy
 
-# Each in-flight ticket can hold a connection while it waits for the rate
-# limiter's advisory lock, next to its heartbeats and the claim queries.
 SPARE_CONNECTIONS = 5
 
 

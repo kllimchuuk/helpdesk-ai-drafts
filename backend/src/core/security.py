@@ -50,8 +50,6 @@ def require_operator(
 
 
 def parse_basic(header: str) -> BasicCredentials | None:
-    # Parsed here rather than with FastAPI's HTTPBasic, which decodes as ASCII and
-    # answers malformed headers with its own error body instead of ours.
     scheme, _, token = header.partition(" ")
     if scheme.lower() != "basic" or not token:
         return None
@@ -66,8 +64,6 @@ def parse_basic(header: str) -> BasicCredentials | None:
 
 
 def credentials_match(credentials: BasicCredentials, settings: Settings) -> bool:
-    # Both comparisons always run, in constant time, so the response time does
-    # not reveal which half was wrong.
     user_ok = secrets.compare_digest(
         credentials.username.encode(), settings.OPERATOR_USER.encode()
     )
@@ -79,9 +75,6 @@ def credentials_match(credentials: BasicCredentials, settings: Settings) -> bool
 
 
 def require_operator_ui(request: Request) -> None:
-    # Browsers resend cached Basic credentials on cross-site form posts. A form
-    # cannot set a custom header or a JSON content type without a CORS preflight,
-    # which the backend never allows, so these two checks stop CSRF.
     content_type = request.headers.get("content-type", "")
     if (
         request.headers.get(OPERATOR_UI_HEADER) != OPERATOR_UI_VALUE

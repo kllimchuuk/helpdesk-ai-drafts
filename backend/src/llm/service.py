@@ -36,7 +36,9 @@ class LlmCallService:
             self._window_seconds, skip=recent - self._limit
         )
         await self._repository.commit()
-        return Reservation(route=None, wait_seconds=max(seconds, MIN_WAIT_SECONDS))
+        return Reservation(
+            route=None, wait_seconds=max(seconds or 0.0, MIN_WAIT_SECONDS)
+        )
 
     async def _choose_route(self) -> LlmRoute:
         if not self._has_key:

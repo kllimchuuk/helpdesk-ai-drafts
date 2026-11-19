@@ -8,11 +8,7 @@ from delivery.schemas import SendOutcome, SendResult
 from delivery.ssrf import Resolver, pin_target, system_resolve
 
 SEND_TIMEOUT = httpx.Timeout(10.0, connect=5.0)
-# httpx limits each read and write, not the request: a server sending one byte
-# every few seconds could hold a send past its 120 s lease without this.
 SEND_DEADLINE_S = 30.0
-# No keep-alive: the pool is keyed by the pinned address, so a kept connection
-# could carry a request for one host over a TLS session opened for another.
 SEND_LIMITS = httpx.Limits(max_keepalive_connections=0)
 
 
@@ -67,8 +63,6 @@ class HelpdeskClient:
         )
         try:
             async with asyncio.timeout(self._deadline_seconds):
-                # Streamed and closed unread: only the status matters, and a
-                # hostile body could be endless.
                 response = await self._http.send(
                     request, follow_redirects=False, stream=True
                 )

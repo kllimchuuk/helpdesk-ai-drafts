@@ -10,7 +10,7 @@ from llm.limiter import RateLimiter
 from llm.repository import TODAY_UTC, LlmCallRepositoryImpl
 from llm.repository import WINDOW as WINDOW_CONDITION
 from llm.route import LlmRoute
-from llm.service import LlmCallService
+from llm.service import MIN_WAIT_SECONDS, LlmCallService
 
 WINDOW = 60.0
 
@@ -304,3 +304,34 @@ async def test_the_time_conditions_can_use_the_called_at_index(
         )
 
     assert "Index Cond" in "\n".join(plan.scalars())
+
+
+class EmptyWindowRepository:
+    """A full window that has no row left to wait for when the slot is asked."""
+
+    async def lock_reservations(self) -> None:
+        return None
+
+    async def count_in_window(self, window_seconds: float) -> int:
+        return 5
+
+    async def seconds_until_slot(self, window_seconds: float, skip: int) -> None:
+        return None
+
+    async def commit(self) -> None:
+        return None
+
+
+async def test_a_window_with_no_row_to_wait_for_waits_the_minimum() -> None:
+    service = LlmCallService(
+        EmptyWindowRepository(),
+        limit=5,
+        window_seconds=WINDOW,
+        daily_cap=100,
+        has_key=True,
+    )
+
+    reservation = await service.reserve()
+
+    assert reservation.route is None
+    assert reservation.wait_seconds == MIN_WAIT_SECONDS

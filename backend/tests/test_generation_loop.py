@@ -123,7 +123,7 @@ async def test_received_tickets_become_drafts(
     await insert_events(session_factory, 3)
     llm = FakeLLMClient(
         default=LLMResult(
-            reply="Відкрийте звіт.", cited_slugs=["export-report-pdf"], is_static=False
+            reply="Відкрийте звіт.", cited_slugs=("export-report-pdf",), is_static=False
         )
     )
 
@@ -230,8 +230,6 @@ async def test_an_unexpected_error_is_retried_and_does_not_stop_the_loop(
 ) -> None:
     await insert_events(session_factory, 2)
     llm = FakeLLMClient(RuntimeError("bug"))
-    # A lease far longer than the wait: only the explicit retry can bring the
-    # ticket back in time, not the expiry of a crashed task's lease.
     policy = replace(FAST, lease_seconds=600.0)
 
     found = await run_to_end(session_factory, llm, policy)
@@ -330,6 +328,49 @@ async def test_the_heartbeat_keeps_a_slow_ticket_with_its_worker(
     finally:
         await slow.kill()
         await other.shutdown()
+
+
+async def test_a_heartbeat_that_fails_once_does_not_lose_the_lease(
+    session_factory: async_sessionmaker[AsyncSession],
+    loaded_kb: None,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    await insert_events(session_factory)
+    real_extend = TicketRepositoryImpl.extend_generation_lease
+    calls = 0
+
+    async def flaky_extend(self, ticket, lease_seconds):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise RuntimeError("heartbeat broke")
+        return await real_extend(self, ticket, lease_seconds)
+
+    monkeypatch.setattr(TicketRepositoryImpl, "extend_generation_lease", flaky_extend)
+    started = asyncio.Event()
+
+    async def note_start(request: LLMRequest) -> None:
+        started.set()
+
+    slow_llm = FakeLLMClient(delay=FAST.lease_seconds * 2.5, on_call=note_start)
+    slow = Worker(session_factory, slow_llm)
+    await asyncio.wait_for(started.wait(), timeout=5)
+    other_llm = FakeLLMClient()
+    other = Worker(session_factory, other_llm)
+    try:
+        [row] = await wait_until(
+            session_factory,
+            all_in(TicketStatus.DRAFT_READY, TicketStatus.GENERATION_FAILED),
+        )
+    finally:
+        await slow.shutdown()
+        await other.shutdown()
+
+    assert row.status == TicketStatus.DRAFT_READY
+    assert row.gen_attempts == 1
+    assert other_llm.requests == []
+    assert "task crashed" not in caplog.text
 
 
 async def test_a_ticket_whose_worker_died_on_every_attempt_fails_without_a_call(

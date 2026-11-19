@@ -101,7 +101,6 @@ def create_app(chaos: Chaos | None = None) -> FastAPI:
         roll -= chaos.timeout_rate
         store.save(idempotency_key, chaos.honor_idempotency_key)
         if roll < chaos.hang_after_store_rate:
-            # Stored, then silent: the sender cannot tell whether it arrived.
             await asyncio.sleep(chaos.hang_seconds)
         return {"status": "created"}
 

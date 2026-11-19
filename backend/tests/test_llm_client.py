@@ -72,7 +72,7 @@ async def test_a_valid_answer_becomes_a_result() -> None:
     result = await provider(recorder).complete(REQUEST)
 
     assert result.reply == "Open Settings."
-    assert result.cited_slugs == ["reset-password"]
+    assert result.cited_slugs == ("reset-password",)
     assert result.is_static is False
 
 

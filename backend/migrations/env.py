@@ -43,7 +43,6 @@ def do_run_migrations(connection: Connection) -> None:
         compare_server_default=True,
     )
     with context.begin_transaction():
-        # Containers that start together would otherwise race to create the tables.
         context.execute(f"SELECT pg_advisory_xact_lock({MIGRATION_LOCK_ID})")
         context.run_migrations()
 

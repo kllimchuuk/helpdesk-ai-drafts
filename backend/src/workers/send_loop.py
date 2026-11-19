@@ -7,11 +7,13 @@ from delivery.helpdesk_client import HelpdeskClient
 from delivery.schemas import SendOutcome, SendResult
 from tickets.repository import TicketRepository
 from tickets.schemas import ClaimedSend
+from tickets.service import claimed_send
 from workers.backoff import backoff_seconds
 from workers.queue_loop import QueueLoop, log
 
 NO_DRAFT = "no_draft: the approved ticket has no reply text"
 INTERNAL_ERROR = "internal_error: unexpected error while sending"
+STALE_SEND_ERROR = "lease_expired: the worker stopped during the send"
 
 
 @dataclass(frozen=True)
@@ -45,11 +47,17 @@ class SendLoop(QueueLoop[ClaimedSend]):
     async def _claim_batch(
         self, tickets: TicketRepository, limit: int
     ) -> list[ClaimedSend]:
-        await tickets.expire_stale_sends(
-            retry_ambiguous=self._policy.retry_ambiguous,
-            max_attempts=self._policy.max_attempts,
-        )
-        return await tickets.claim_for_sending(limit, self._policy.lease_seconds)
+        if self._policy.retry_ambiguous:
+            await tickets.requeue_stale_sends(
+                max_attempts=self._policy.max_attempts, error=STALE_SEND_ERROR
+            )
+            await tickets.park_exhausted_stale_sends(
+                max_attempts=self._policy.max_attempts, error=STALE_SEND_ERROR
+            )
+        else:
+            await tickets.park_stale_sends(error=STALE_SEND_ERROR)
+        rows = await tickets.claim_for_sending(limit, self._policy.lease_seconds)
+        return [claimed_send(row) for row in rows]
 
     async def _process(self, ticket: ClaimedSend) -> None:
         if not ticket.reply:
@@ -63,7 +71,6 @@ class SendLoop(QueueLoop[ClaimedSend]):
                 idempotency_key=str(ticket.id),
             )
         except Exception:
-            # Whatever broke may have done so after the request left: ambiguous.
             log(logging.ERROR, "Sending failed unexpectedly", ticket, exc_info=True)
             outcome = SendOutcome(SendResult.UNKNOWN, INTERNAL_ERROR)
         await self._settle(ticket, outcome)
@@ -72,8 +79,6 @@ class SendLoop(QueueLoop[ClaimedSend]):
         result = outcome.result
         exhausted = ticket.attempt >= self._policy.max_attempts
         if result == SendResult.UNKNOWN and self._policy.retry_ambiguous:
-            # Out of attempts it stays unknown: send_failed would tell the operator
-            # that a reply which may have arrived certainly did not.
             result = SendResult.UNKNOWN if exhausted else SendResult.RETRY
         if result == SendResult.RETRY and exhausted:
             result = SendResult.FAILED
