@@ -21,6 +21,7 @@ services:
     build: ./backend
     environment:
       APP_ENV: ${APP_ENV:-local}
+      LOG_FORMAT: ${LOG_FORMAT:-text}
       DATABASE_URL: postgresql+asyncpg://postgres:postgres@db:5432/helpdesk
       OPERATOR_USER: ${OPERATOR_USER:-operator}
       OPERATOR_PASSWORD: ${OPERATOR_PASSWORD:-operator}
@@ -56,6 +57,9 @@ services:
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:8080}
       SEND_CONCURRENCY: ${SEND_CONCURRENCY:-10}
       SEND_RETRY_AMBIGUOUS: ${SEND_RETRY_AMBIGUOUS:-false}
+      LOG_FORMAT: ${LOG_FORMAT:-text}
+      RETENTION_DAYS: ${RETENTION_DAYS:-30}
+      PRUNE_INTERVAL_S: ${PRUNE_INTERVAL_S:-3600}
       # Compose's own helpdesk mock lives on the private network; nothing else may.
       REPLY_URL_ALLOWED_HOSTS: ${REPLY_URL_ALLOWED_HOSTS:-mock-helpdesk}
     depends_on:

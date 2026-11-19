@@ -9,6 +9,7 @@ from delivery.helpdesk_client import build_http_client
 from delivery.ssrf import Resolver, system_resolve
 from workers.dependencies import (
     build_generation_loop,
+    build_prune_loop,
     build_send_loop,
     worker_pool_size,
 )
@@ -32,6 +33,9 @@ async def run_worker(
             sending = build_send_loop(
                 settings, session_factory, helpdesk_http, resolve=resolve
             )
-            await asyncio.gather(generation.run(stop), sending.run(stop))
+            pruning = build_prune_loop(settings, session_factory)
+            await asyncio.gather(
+                generation.run(stop), sending.run(stop), pruning.run(stop)
+            )
     finally:
         await engine.dispose()

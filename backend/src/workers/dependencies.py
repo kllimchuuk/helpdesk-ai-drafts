@@ -8,6 +8,7 @@ from delivery.ssrf import Resolver, system_resolve
 from drafting.service import DraftingService
 from llm.factory import build_llm_client
 from workers.generation_loop import GenerationLoop, GenerationPolicy
+from workers.prune_loop import DAY_SECONDS, PruneLoop, PrunePolicy
 from workers.send_loop import SendLoop, SendPolicy
 
 SPARE_CONNECTIONS = 5
@@ -54,5 +55,18 @@ def build_send_loop(
         SendPolicy(
             concurrency=settings.SEND_CONCURRENCY,
             retry_ambiguous=settings.SEND_RETRY_AMBIGUOUS,
+        ),
+    )
+
+
+def build_prune_loop(
+    settings: Settings,
+    session_factory: async_sessionmaker[AsyncSession],
+) -> PruneLoop:
+    return PruneLoop(
+        session_factory,
+        PrunePolicy(
+            ticket_retention_seconds=settings.RETENTION_DAYS * DAY_SECONDS,
+            interval_seconds=settings.PRUNE_INTERVAL_S,
         ),
     )

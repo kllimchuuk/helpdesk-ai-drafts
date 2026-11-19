@@ -1,3 +1,5 @@
+from typing import Literal
+
 from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -9,6 +11,9 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     APP_ENV: str = "local"
+    LOG_FORMAT: Literal["text", "json"] = "text"
+    RETENTION_DAYS: int = Field(default=30, ge=1)
+    PRUNE_INTERVAL_S: float = Field(default=3600.0, gt=0)
     KB_CONTENT_DIR: str = "content/knowledge_base"
     KB_MIN_SCORE: float = 0.4
     ANTHROPIC_API_KEY: SecretStr = SecretStr("")

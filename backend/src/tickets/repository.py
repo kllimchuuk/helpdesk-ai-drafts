@@ -4,7 +4,7 @@ from datetime import timedelta
 from typing import Annotated, Any
 
 from fastapi import Depends
-from sqlalchemy import ColumnElement, Select, func, or_, select, true, update
+from sqlalchemy import ColumnElement, Select, delete, func, or_, select, true, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -24,6 +24,12 @@ class TicketRepository(ABC):
         message: str,
         reply_url: str,
     ) -> bool:
+        raise NotImplementedError()
+
+    @abstractmethod
+    async def delete_finished_older_than(
+        self, statuses: list[TicketStatus], age_seconds: float
+    ) -> int:
         raise NotImplementedError()
 
     @abstractmethod
@@ -163,6 +169,20 @@ class TicketRepositoryImpl(TicketRepository):
         inserted = (await self._session.execute(statement)).first() is not None
         await self._session.commit()
         return inserted
+
+    @translate_unavailable
+    async def delete_finished_older_than(
+        self, statuses: list[TicketStatus], age_seconds: float
+    ) -> int:
+        result = await self._session.execute(
+            delete(TicketEvent).where(
+                TicketEvent.status.in_(statuses),
+                TicketEvent.updated_at
+                < func.clock_timestamp()
+                - func.make_interval(0, 0, 0, 0, 0, 0, age_seconds),
+            )
+        )
+        return result.rowcount
 
     @translate_unavailable
     async def count_by_status(self) -> dict[str, int]:

@@ -121,7 +121,8 @@ Transient generation failures return a row to `received`, and definite send fail
 
 ## 7. Workers and queue
 
-- One worker process runs two async loops: generation (stage `received`) and sending (stage `approved`).
+- One worker process runs three async loops: generation (stage `received`), sending (stage `approved`) and pruning.
+- Pruning runs every `PRUNE_INTERVAL_S`: it deletes tickets in `sent`, `rejected`, `generation_failed` or `send_failed` whose `updated_at` is older than `RETENTION_DAYS`, and `llm_calls` older than 2 days (the limiter looks back one minute and the daily cap one UTC day). Rows in any other status are never deleted, `send_unknown` included.
 - A claim is `SELECT ... WHERE status = :stage AND next_attempt_at <= now() AND (locked_until IS NULL OR locked_until < now()) FOR UPDATE SKIP LOCKED`, then set `locked_until = now() + lease`. Lease is 120 s with a heartbeat every 40 s while the call is waiting or running.
 - Generation claims `received` rows and `generating` rows whose lease expired (the worker died), and increments `gen_attempts` on every claim. The attempt number fences the result: saving, retrying, failing and the heartbeat are compare-and-set on `status = 'generating' AND gen_attempts = :attempt`, so a worker that lost its lease cannot overwrite the new owner. A row reclaimed beyond the attempt cap goes to `generation_failed` without a model call.
 - Concurrency is configurable (defaults: 20 generation tasks, 10 send tasks). Polling interval 1 s.
@@ -209,7 +210,7 @@ backend/
     main.py                           create_app, lifespan, error handlers, /health
     config.py                         Settings; defaults so compose works without .env
     core/        database, dependencies, exceptions, base_model, registry, sql (a generic CRUD repository is added when a feature first needs it),
-                 security (Basic Auth); logging and clock were not built (DECISIONS, S9)
+                 security (Basic Auth), logging (text and JSON formatters); clock was not built (DECISIONS, S9)
     webhooks/    router, schemas, service (ingest)
     tickets/     models, status, repository, service, schemas, exceptions,
                  router (/api/tickets, /api/stats)
@@ -265,7 +266,7 @@ Slices. Each is a commit or a few, with the module and its tests together. Deplo
 
 ## 14. Configuration and open questions
 
-Environment variables (none required locally; `.env.example` lists only the four that production requires): `DATABASE_URL`, `ANTHROPIC_API_KEY` (empty enables keyless mode), `LLM_MODEL`, `LLM_REQUEST_TIMEOUT_S`, `KB_CONTENT_DIR`, `KB_MIN_SCORE`, `LLM_RATE_LIMIT_PER_MINUTE`, `LLM_DAILY_CALL_CAP`, `LLM_CONCURRENCY`, `SEND_CONCURRENCY`, `SEND_RETRY_AMBIGUOUS`, `KEYLESS_DELAY_MIN_S`, `KEYLESS_DELAY_MAX_S`, `REPLY_URL_ALLOWED_HOSTS`, `PUBLIC_BASE_URL`, `OPERATOR_USER`, `OPERATOR_PASSWORD`, `APP_ENV`. Also read: `DB_HOST_PORT` (compose, the published database port), `TEST_DATABASE_URL` (the tests), and for `docker-compose.prod.yml` the required `DB_PASSWORD`, `OPERATOR_USER`, `OPERATOR_PASSWORD` and `PUBLIC_BASE_URL`.
+Environment variables (none required locally; `.env.example` lists only the four that production requires): `DATABASE_URL`, `ANTHROPIC_API_KEY` (empty enables keyless mode), `LLM_MODEL`, `LLM_REQUEST_TIMEOUT_S`, `KB_CONTENT_DIR`, `KB_MIN_SCORE`, `LLM_RATE_LIMIT_PER_MINUTE`, `LLM_DAILY_CALL_CAP`, `LLM_CONCURRENCY`, `SEND_CONCURRENCY`, `SEND_RETRY_AMBIGUOUS`, `LOG_FORMAT` (`text` or `json`, default `text`, `json` in `docker-compose.prod.yml`), `RETENTION_DAYS` (default 30), `PRUNE_INTERVAL_S` (default 3600), `KEYLESS_DELAY_MIN_S`, `KEYLESS_DELAY_MAX_S`, `REPLY_URL_ALLOWED_HOSTS`, `PUBLIC_BASE_URL`, `OPERATOR_USER`, `OPERATOR_PASSWORD`, `APP_ENV`. Also read: `DB_HOST_PORT` (compose, the published database port), `TEST_DATABASE_URL` (the tests), and for `docker-compose.prod.yml` the required `DB_PASSWORD`, `OPERATOR_USER`, `OPERATOR_PASSWORD` and `PUBLIC_BASE_URL`.
 
 Answered on 2026-11-06 (see `docs/DECISIONS.md`): ambiguous send outcomes are parked as `send_unknown` (§9); package manager is `uv`; the repository stays private for now; demo credentials are not stored in the repo (local defaults `operator/operator`, server credentials sent to the reviewer separately), and `LLM_DAILY_CALL_CAP` bounds the cost of the public webhook.
 

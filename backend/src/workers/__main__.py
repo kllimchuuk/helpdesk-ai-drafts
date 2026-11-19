@@ -5,32 +5,16 @@ import sys
 from typing import TextIO
 
 from config import settings
+from core.logging import build_log_handler
 from workers.runner import run_worker
 
 logger = logging.getLogger("workers")
 
-LOG_FORMAT = "%(asctime)s %(levelname)s %(name)s %(message)s"
-TICKET_FIELDS = ("event_id", "ticket_id", "attempt")
 
-
-class TicketContextFormatter(logging.Formatter):
-    def format(self, record: logging.LogRecord) -> str:
-        line = super().format(record)
-        context = " ".join(
-            f"{field}={getattr(record, field)}"
-            for field in TICKET_FIELDS
-            if hasattr(record, field)
-        )
-        if not context:
-            return line
-        message, newline, traceback = line.partition("\n")
-        return f"{message} {context}{newline}{traceback}"
-
-
-def configure_logging(stream: TextIO = sys.stderr) -> logging.Handler:
-    handler = logging.StreamHandler(stream)
-    handler.setFormatter(TicketContextFormatter(LOG_FORMAT))
-    return handler
+def configure_logging(
+    stream: TextIO = sys.stderr, log_format: str = settings.LOG_FORMAT
+) -> logging.Handler:
+    return build_log_handler(log_format, stream)
 
 
 async def main() -> None:

@@ -23,6 +23,7 @@ services:
     restart: unless-stopped
     environment:
       APP_ENV: production
+      LOG_FORMAT: ${LOG_FORMAT:-json}
       DATABASE_URL: postgresql+asyncpg://postgres:${DB_PASSWORD:?set DB_PASSWORD in .env}@db:5432/helpdesk
       OPERATOR_USER: ${OPERATOR_USER:?set OPERATOR_USER in .env}
       OPERATOR_PASSWORD: ${OPERATOR_PASSWORD:?set OPERATOR_PASSWORD in .env}
@@ -57,6 +58,9 @@ services:
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:?set PUBLIC_BASE_URL in .env, for example http://203.0.113.10}
       SEND_CONCURRENCY: ${SEND_CONCURRENCY:-10}
       SEND_RETRY_AMBIGUOUS: ${SEND_RETRY_AMBIGUOUS:-false}
+      LOG_FORMAT: ${LOG_FORMAT:-json}
+      RETENTION_DAYS: ${RETENTION_DAYS:-30}
+      PRUNE_INTERVAL_S: ${PRUNE_INTERVAL_S:-3600}
       # Empty: a reply_url that resolves to a private address is refused. The demo
       # mock needs REPLY_URL_ALLOWED_HOSTS=mock-helpdesk, set it only for a demo.
       REPLY_URL_ALLOWED_HOSTS: ${REPLY_URL_ALLOWED_HOSTS:-}
