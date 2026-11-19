@@ -62,7 +62,7 @@ See `docs/DECISIONS.md` for alternatives and why they lost.
 
 **Reply to the customer.** `POST <reply_url>` with `{"ticket_id": "T-1042", "message": "..."}` and header `Idempotency-Key: <ticket_events.id>`. `201 Created` means delivered. The helpdesk sometimes answers 5xx or does not answer in time.
 
-**Health.** `GET /health` returns `200` with body `OK`. No database call: it is a liveness check.
+**Health.** `GET /health` returns `200` with body `OK`. No database call: it is a liveness check. `GET /health/ready` runs `SELECT 1` and returns `200` with body `OK`, or `503` with code `database_unavailable`: it is a readiness check, reachable inside the compose network only (nginx proxies `/health` alone).
 
 **Stats.** `GET /api/stats` returns `{"counts": {<status>: n, ...}, "total": n}` with every status present, zeros included (no personal data). The UI header and the simulator use it.
 
