@@ -187,14 +187,14 @@ async def test_retention_days_reach_the_loop_as_days(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
     await clean(session_factory)
-    await seed_ticket(session_factory, "day-29", TicketStatus.SENT, 29)
-    await seed_ticket(session_factory, "day-31", TicketStatus.SENT, 31)
+    await seed_ticket(session_factory, "day-9", TicketStatus.SENT, 9)
+    await seed_ticket(session_factory, "day-11", TicketStatus.SENT, 11)
 
     await build_prune_loop(
-        Settings(_env_file=None, RETENTION_DAYS=30), session_factory
+        Settings(_env_file=None, RETENTION_DAYS=10), session_factory
     ).prune_once()
 
-    assert await event_ids(session_factory) == {"day-29"}
+    assert await event_ids(session_factory) == {"day-9"}
 
 
 async def test_the_repositories_commit_their_own_deletes(

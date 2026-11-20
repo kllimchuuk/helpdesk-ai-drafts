@@ -164,7 +164,7 @@ Transient generation failures return a row to `received`, and definite send fail
 - `index.html` ticket list with status filter and per-status counts; it re-fetches every 5 s. `GET /api/tickets?status=&limit=` returns the newest first (default 100, at most 1000) with a 160-character preview and no contact data; `GET /api/tickets/{id}` returns everything except `reply_url`. A malformed id is `404`, a review of a ticket that is not `draft_ready` is `409` with the current status.
 - `ticket.html?id=...` customer message, draft, sources, low-confidence badge, last error, **Approve** and **Reject** (only from `draft_ready`). For `send_unknown`: **Mark delivered** and **Resend**, with a warning that the reply may already have reached the customer.
 - `kb.html?slug=...` public article page (no auth), served at `/kb/<slug>` by an nginx rewrite, because customers receive these links.
-- Logs go to stderr. `LOG_FORMAT=text` (default) is readable and the worker adds the ticket context; `LOG_FORMAT=json` (the production compose default) writes one JSON object per line, with `event_id`, `ticket_id` and `attempt` on ticket lines, for the worker and for the backend including uvicorn's access lines (DECISIONS 2026-11-20).
+- Logs go to stderr (uvicorn's own access lines go to stdout in text mode). `LOG_FORMAT=text` (default) is readable and the worker adds the ticket context; `LOG_FORMAT=json` (the production compose default) writes one JSON object per line, with `event_id`, `ticket_id` and `attempt` on ticket lines, for the worker and for the backend including uvicorn's access lines. Start-up and shutdown lines, the Alembic output and the knowledge base loader stay text (DECISIONS 2026-11-20).
 
 ## 11. Mock helpdesk and simulator
 

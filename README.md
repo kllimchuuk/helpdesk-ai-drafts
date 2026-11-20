@@ -12,7 +12,7 @@ This is a test task, built with AI coding agents. Read how the work is organised
 
 | Task requirement | Where | Evidence |
 |---|---|---|
-| Webhook `POST /webhooks/helpdesk` answers within 2 s; duplicates, also simultaneous ones, are stored once; nothing is lost | `backend/src/webhooks`, `backend/src/tickets/repository.py` (`INSERT ... ON CONFLICT`) | [REPORT](docs/REPORT.md) runs 1 and 2 |
+| Webhook `POST /webhooks/helpdesk` answers within 2 s; duplicates, also simultaneous ones, are stored once within `RETENTION_DAYS` (30 days, [DECISIONS](docs/DECISIONS.md) 2026-11-20); nothing is lost | `backend/src/webhooks`, `backend/src/tickets/repository.py` (`INSERT ... ON CONFLICT`) | [REPORT](docs/REPORT.md) runs 1 and 2 |
 | `/health` returns 200 `OK` | `backend/src/health` | `curl localhost:8080/health` |
 | Relevant knowledge-base articles (8, Ukrainian) with links in the draft | `backend/content/knowledge_base`, `backend/src/knowledge_base`, `backend/src/drafting` | "Knowledge base" below |
 | LLM calls: at most 60 a minute for the whole service | `backend/src/llm` | "LLM calls, rate limit and keyless mode", REPORT run 1 |

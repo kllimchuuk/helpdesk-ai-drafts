@@ -1,8 +1,12 @@
 import io
 import json
 import logging
+import logging.config
+from collections.abc import Iterator
 
+import pytest
 from fastapi import FastAPI
+from uvicorn.config import LOGGING_CONFIG
 
 from config import Settings
 from core.logging import SERVER_LOGGERS, JsonFormatter, build_log_handler
@@ -68,6 +72,27 @@ def test_the_text_format_keeps_the_key_value_suffix() -> None:
     )
 
 
+@pytest.fixture
+def uvicorn_logging() -> Iterator[None]:
+    names = (*SERVER_LOGGERS, "")
+    saved = {
+        name: (
+            list(logging.getLogger(name).handlers),
+            logging.getLogger(name).propagate,
+            logging.getLogger(name).level,
+        )
+        for name in names
+    }
+    logging.config.dictConfig(LOGGING_CONFIG)
+    logging.getLogger().setLevel(logging.WARNING)
+    yield
+    for name, (handlers, propagate, level) in saved.items():
+        server = logging.getLogger(name)
+        server.handlers = handlers
+        server.propagate = propagate
+        server.setLevel(level)
+
+
 def make_app(log_format: str) -> FastAPI:
     return create_app(Settings(_env_file=None, LOG_FORMAT=log_format))
 
@@ -115,3 +140,38 @@ async def test_the_text_format_leaves_the_server_loggers_alone() -> None:
 
     async with lifespan(app):
         assert logging.getLogger("uvicorn.access").handlers == before
+
+
+async def test_under_the_uvicorn_config_each_server_line_is_written_once(
+    uvicorn_logging: None,
+) -> None:
+    app = make_app("json")
+    stream = io.StringIO()
+    before = {
+        name: (
+            list(logging.getLogger(name).handlers),
+            logging.getLogger(name).propagate,
+        )
+        for name in (*SERVER_LOGGERS, "")
+    }
+    root_level = logging.getLogger().level
+
+    async with lifespan(app):
+        for name in SERVER_LOGGERS:
+            server = logging.getLogger(name)
+            assert len(server.handlers) == 1
+            assert not server.propagate
+            server.handlers[0].setStream(stream)
+        logging.getLogger("uvicorn.error").info("error line")
+        logging.getLogger("uvicorn.access").info("access line")
+
+    lines = [json.loads(line) for line in stream.getvalue().splitlines()]
+    assert [line["message"] for line in lines] == ["error line", "access line"]
+    assert {
+        name: (
+            list(logging.getLogger(name).handlers),
+            logging.getLogger(name).propagate,
+        )
+        for name in (*SERVER_LOGGERS, "")
+    } == before
+    assert logging.getLogger().level == root_level
