@@ -53,11 +53,9 @@ class PruneLoop:
             tickets = await TicketRepositoryImpl(session).delete_finished_older_than(
                 list(FINISHED_STATUSES), self._policy.ticket_retention_seconds
             )
-            await session.commit()
         async with self._session_factory() as session:
             calls = await LlmCallRepositoryImpl(session).delete_older_than(
                 self._policy.llm_call_retention_seconds
             )
-            await session.commit()
         if tickets or calls:
             logger.info("Pruned %d tickets and %d llm calls", tickets, calls)

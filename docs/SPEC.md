@@ -72,6 +72,7 @@ See `docs/DECISIONS.md` for alternatives and why they lost.
 |---|---|---|
 | `POST /webhooks/helpdesk` | helpdesk | none |
 | `GET /health` | anyone | none |
+| `GET /health/ready` | compose network only (nginx does not proxy it) | none |
 | `GET /api/stats`, `GET /api/kb/{slug}` | UI, simulator | none |
 | `GET /api/tickets`, `GET /api/tickets/{id}` | operator | Basic Auth |
 | `POST /api/tickets/{id}/{approve,reject,mark-delivered,resend}` | operator | Basic Auth |
@@ -85,7 +86,7 @@ These are what the service must keep true. Each has an acceptance test (§12).
 | ID | Invariant |
 |---|---|
 | I1 | The webhook answers in well under 2 s regardless of LLM or helpdesk state. |
-| I2 | One `event_id` produces exactly one ticket row, including simultaneous deliveries. Enforced by a `UNIQUE` constraint plus `INSERT ... ON CONFLICT DO NOTHING`, never check-then-insert. |
+| I2 | Within `RETENTION_DAYS` (30), one `event_id` produces exactly one ticket row, including simultaneous deliveries. After that the finished ticket is pruned and a redelivery is accepted as new (DECISIONS 2026-11-20). Enforced by a `UNIQUE` constraint plus `INSERT ... ON CONFLICT DO NOTHING`, never check-then-insert. |
 | I3 | A ticket acknowledged with 200 is never lost: restart, crash and Postgres failover leave it in the queue. |
 | I4 | LLM calls never exceed 60 per minute across the whole service, retries and the keyless request included. Many concurrent calls are allowed (about 18 in flight at peak). |
 | I5 | A worker crash never strands a ticket: a lease expires and another worker takes it. |
@@ -163,7 +164,7 @@ Transient generation failures return a row to `received`, and definite send fail
 - `index.html` ticket list with status filter and per-status counts; it re-fetches every 5 s. `GET /api/tickets?status=&limit=` returns the newest first (default 100, at most 1000) with a 160-character preview and no contact data; `GET /api/tickets/{id}` returns everything except `reply_url`. A malformed id is `404`, a review of a ticket that is not `draft_ready` is `409` with the current status.
 - `ticket.html?id=...` customer message, draft, sources, low-confidence badge, last error, **Approve** and **Reject** (only from `draft_ready`). For `send_unknown`: **Mark delivered** and **Resend**, with a warning that the reply may already have reached the customer.
 - `kb.html?slug=...` public article page (no auth), served at `/kb/<slug>` by an nginx rewrite, because customers receive these links.
-- Logs are plain text on stdout; the worker includes the ticket context. JSON logs with `event_id` and `ticket_id` on every line are cut (DECISIONS, S9).
+- Logs go to stderr. `LOG_FORMAT=text` (default) is readable and the worker adds the ticket context; `LOG_FORMAT=json` (the production compose default) writes one JSON object per line, with `event_id`, `ticket_id` and `attempt` on ticket lines, for the worker and for the backend including uvicorn's access lines (DECISIONS 2026-11-20).
 
 ## 11. Mock helpdesk and simulator
 
@@ -207,20 +208,21 @@ backend/
   alembic.ini  migrations/            one migration per slice
   content/knowledge_base/*.md                     8 Ukrainian KB articles with front matter (slug, title)
   src/
-    main.py                           create_app, lifespan, error handlers, /health
+    main.py                           create_app, lifespan, error handlers
     config.py                         Settings; defaults so compose works without .env
     core/        database, dependencies, exceptions, base_model, registry, sql (a generic CRUD repository is added when a feature first needs it),
                  security (Basic Auth), logging (text and JSON formatters); clock was not built (DECISIONS, S9)
     webhooks/    router, schemas, service (ingest)
     tickets/     models, status, repository, service, schemas, exceptions,
                  router (/api/tickets, /api/stats)
+    health/      router, service, repository (/health, /health/ready)
     knowledge_base/  models, repository, service (search), loader, schemas, exceptions,
                      router (/api/kb/{slug})
     llm/         client (interface), anthropic_client, keyless, guarded_client, factory,
                  call log and limiter (models, route, repository, service, limiter), schemas, exceptions
     drafting/    service, prompts, schemas
     delivery/    helpdesk_client, outcome (classification), ssrf, schemas, exceptions
-    workers/     runner, queue_loop (shared), generation_loop, send_loop, backoff, dependencies, __main__
+    workers/     runner, queue_loop (shared), generation_loop, send_loop, prune_loop, backoff, dependencies, __main__
   tests/         conftest, fakes, helpers, test_<module>.py
 
 frontend/

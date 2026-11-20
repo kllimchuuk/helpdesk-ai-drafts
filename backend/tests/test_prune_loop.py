@@ -1,9 +1,11 @@
 import asyncio
 from datetime import timedelta
 
+import pytest
 from sqlalchemy import func, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from config import Settings
 from llm.models import LlmCall
 from llm.repository import LlmCallRepositoryImpl
 from llm.route import LlmRoute
@@ -11,6 +13,7 @@ from tests.helpers import sample_event
 from tickets.models import TicketEvent
 from tickets.repository import TicketRepositoryImpl
 from tickets.status import TicketStatus
+from workers.dependencies import build_prune_loop
 from workers.prune_loop import FINISHED_STATUSES, PruneLoop, PrunePolicy
 
 DAY = 86_400.0
@@ -83,7 +86,6 @@ async def test_only_old_finished_tickets_are_deleted(
         deleted = await TicketRepositoryImpl(session).delete_finished_older_than(
             list(FINISHED_STATUSES), 30 * DAY
         )
-        await session.commit()
 
     assert deleted == 2
     assert await event_ids(session_factory) == {
@@ -104,7 +106,6 @@ async def test_old_llm_calls_are_deleted_and_recent_ones_stay(
 
     async with session_factory() as session:
         deleted = await LlmCallRepositoryImpl(session).delete_older_than(2 * DAY)
-        await session.commit()
 
     assert deleted == 2
     assert await call_count(session_factory) == 1
@@ -158,3 +159,57 @@ async def test_a_failing_prune_does_not_stop_the_loop(
     await asyncio.wait_for(task, timeout=5)
 
     assert calls >= 2
+
+
+def test_only_the_four_finished_statuses_are_pruned() -> None:
+    assert set(FINISHED_STATUSES) == {
+        TicketStatus.SENT,
+        TicketStatus.REJECTED,
+        TicketStatus.GENERATION_FAILED,
+        TicketStatus.SEND_FAILED,
+    }
+
+
+@pytest.mark.parametrize("status", list(TicketStatus))
+async def test_an_old_ticket_is_deleted_only_when_its_status_is_finished(
+    session_factory: async_sessionmaker[AsyncSession], status: TicketStatus
+) -> None:
+    await clean(session_factory)
+    await seed_ticket(session_factory, "old", status, 31)
+
+    await PruneLoop(session_factory, POLICY).prune_once()
+
+    expected = set() if status in FINISHED_STATUSES else {"old"}
+    assert await event_ids(session_factory) == expected
+
+
+async def test_retention_days_reach_the_loop_as_days(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    await clean(session_factory)
+    await seed_ticket(session_factory, "day-29", TicketStatus.SENT, 29)
+    await seed_ticket(session_factory, "day-31", TicketStatus.SENT, 31)
+
+    await build_prune_loop(
+        Settings(_env_file=None, RETENTION_DAYS=30), session_factory
+    ).prune_once()
+
+    assert await event_ids(session_factory) == {"day-29"}
+
+
+async def test_the_repositories_commit_their_own_deletes(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    await clean(session_factory)
+    await seed_ticket(session_factory, "old-sent", TicketStatus.SENT, 40)
+    await seed_call(session_factory, 5)
+
+    async with session_factory() as session:
+        await TicketRepositoryImpl(session).delete_finished_older_than(
+            list(FINISHED_STATUSES), 30 * DAY
+        )
+    async with session_factory() as session:
+        await LlmCallRepositoryImpl(session).delete_older_than(2 * DAY)
+
+    assert await event_ids(session_factory) == set()
+    assert await call_count(session_factory) == 0

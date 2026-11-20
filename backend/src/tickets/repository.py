@@ -182,6 +182,7 @@ class TicketRepositoryImpl(TicketRepository):
                 - func.make_interval(0, 0, 0, 0, 0, 0, age_seconds),
             )
         )
+        await self._session.commit()
         return result.rowcount
 
     @translate_unavailable

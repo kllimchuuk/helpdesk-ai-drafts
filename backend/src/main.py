@@ -8,7 +8,7 @@ from fastapi.responses import JSONResponse
 from config import Settings, settings
 from core.database import build_engine, build_session_factory
 from core.exceptions import AppException
-from core.logging import build_log_handler
+from core.logging import installed_log_handler
 from health.router import router as health_router
 from knowledge_base.router import router as kb_router
 from tickets.router import operator_router as tickets_operator_router
@@ -20,13 +20,10 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    root = logging.getLogger()
-    handler = build_log_handler(app.state.settings.LOG_FORMAT)
-    root.addHandler(handler)
     try:
-        yield
+        with installed_log_handler(app.state.settings.LOG_FORMAT):
+            yield
     finally:
-        root.removeHandler(handler)
         await app.state.db_engine.dispose()
 
 

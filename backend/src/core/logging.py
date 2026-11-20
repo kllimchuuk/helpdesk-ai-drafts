@@ -1,11 +1,14 @@
 import json
 import logging
 import sys
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from typing import TextIO
 
 LOG_FORMAT = "%(asctime)s %(levelname)s %(name)s %(message)s"
 TICKET_FIELDS = ("event_id", "ticket_id", "attempt")
+SERVER_LOGGERS = ("uvicorn", "uvicorn.error", "uvicorn.access")
 
 
 class TicketContextFormatter(logging.Formatter):
@@ -44,3 +47,27 @@ def build_log_handler(log_format: str, stream: TextIO = sys.stderr) -> logging.H
         JsonFormatter() if log_format == "json" else TicketContextFormatter(LOG_FORMAT)
     )
     return handler
+
+
+@contextmanager
+def installed_log_handler(log_format: str) -> Iterator[logging.Handler]:
+    handler = build_log_handler(log_format)
+    root = logging.getLogger()
+    root_level = root.level
+    root.addHandler(handler)
+    root.setLevel(logging.INFO)
+    replaced = []
+    if log_format == "json":
+        for name in SERVER_LOGGERS:
+            server = logging.getLogger(name)
+            replaced.append((server, list(server.handlers), server.propagate))
+            server.handlers = [handler]
+            server.propagate = False
+    try:
+        yield handler
+    finally:
+        for server, handlers, propagate in replaced:
+            server.handlers = handlers
+            server.propagate = propagate
+        root.setLevel(root_level)
+        root.removeHandler(handler)

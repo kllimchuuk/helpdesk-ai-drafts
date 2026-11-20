@@ -109,6 +109,7 @@ class LlmCallRepositoryImpl(LlmCallRepository):
             ),
             {"age": age_seconds},
         )
+        await self._session.commit()
         return result.rowcount
 
     @translate_unavailable

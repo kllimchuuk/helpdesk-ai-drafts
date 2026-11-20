@@ -26,7 +26,7 @@ This is a test task, built with AI coding agents. Read how the work is organised
 
 ## Status
 
-The service is complete: the idempotent webhook, the knowledge base, the LLM gateway (rate limit, daily cap, keyless mode), the generation worker, the operator UI, the send path with `send_unknown`, **Mark delivered** and **Resend**, the mock helpdesk with chaos modes, the load simulator, and the production stack. Cut on purpose: JSON logs and HTTPS (DECISIONS, S9).
+The service is complete: the idempotent webhook, the knowledge base, the LLM gateway (rate limit, daily cap, keyless mode), the generation worker, the operator UI, the send path with `send_unknown`, **Mark delivered** and **Resend**, the mock helpdesk with chaos modes, the load simulator, and the production stack. Cut on purpose: HTTPS (DECISIONS, S9).
 
 ## Public deployment
 
