@@ -2,7 +2,7 @@
 name: reviewer
 description: Independent read-only reviewer for a slice branch of this service. Use before opening a pull request, after a risky change to concurrency, queue, rate-limit, delivery or webhook code, and again after review fixes to confirm they hold. Starts with a fresh context and never edits files.
 tools: Read, Grep, Glob, Bash
-model: inherit
+model: opus
 effort: high
 maxTurns: 30
 skills:

@@ -154,3 +154,13 @@ The commands: `curl` against the addresses above, `curl -u` with the operator lo
 - The runs used one worker. Several workers sharing the database are covered by tests (`test_two_workers_draft_every_ticket_exactly_once`, the limiter's I4 test with 5 workers).
 - SPEC §12 words I1 as "a fake LLM sleeping 30 s"; keyless mode sleeps a random 5-30 s per draft, which keeps the worker busy for the whole run but is not a constant 30 s.
 - The numbers come from one laptop and one run each; they show the invariants hold, not capacity.
+
+## How I worked with AI
+
+Cases where the agent's first attempt was wrong and a test, a review or the owner caught it.
+
+- **2026-11-20, JSON logs.** The first version put the JSON handler only on the root logger. The reviewer found that uvicorn keeps its own text handlers with `propagate` off, so access lines stayed text. The fix installs the handler on the uvicorn loggers too, and a test now runs under uvicorn's own logging config.
+- **2026-11-20, retention setting.** The first test of `RETENTION_DAYS` used the default value of 30, so a setting that was ignored would still pass. The reviewer caught it; the test now uses 10 days with tickets aged 9 and 11.
+- **2026-11-20, mutation check.** A check that the test fails when the root log level is not restored passed by mistake, because earlier tests had left the level at INFO. The fixture now sets the starting level.
+- **2026-11-20, pruning and I2.** Pruning narrowed the duplicate guarantee of SPEC §5 I2 to the retention window and was first recorded only in DECISIONS. The reviewer flagged that §5 needs the owner's approval, and that a redelivered event also gets a new `Idempotency-Key`. The owner approved the narrowing, and SPEC and DECISIONS now state both costs.
+- **2026-11-20, branch.** The agent put this work on a separate branch. The owner asked for it to go on `feat/health-readiness`; the commit was moved and the extra branch deleted.

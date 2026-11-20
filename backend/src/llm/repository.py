@@ -47,6 +47,10 @@ class LlmCallRepository(ABC):
         raise NotImplementedError()
 
     @abstractmethod
+    async def delete_older_than(self, age_seconds: float) -> int:
+        raise NotImplementedError()
+
+    @abstractmethod
     async def commit(self) -> None:
         raise NotImplementedError()
 
@@ -95,6 +99,18 @@ class LlmCallRepositoryImpl(LlmCallRepository):
     @translate_unavailable
     async def record(self, route: LlmRoute) -> None:
         await self._session.execute(insert(LlmCall).values(kind=route.value))
+
+    @translate_unavailable
+    async def delete_older_than(self, age_seconds: float) -> int:
+        result = await self._session.execute(
+            text(
+                "DELETE FROM llm_calls WHERE called_at < clock_timestamp() "
+                "- make_interval(secs => CAST(:age AS float8))"
+            ),
+            {"age": age_seconds},
+        )
+        await self._session.commit()
+        return result.rowcount
 
     @translate_unavailable
     async def commit(self) -> None:

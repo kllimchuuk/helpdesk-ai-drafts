@@ -62,7 +62,7 @@ See `docs/DECISIONS.md` for alternatives and why they lost.
 
 **Reply to the customer.** `POST <reply_url>` with `{"ticket_id": "T-1042", "message": "..."}` and header `Idempotency-Key: <ticket_events.id>`. `201 Created` means delivered. The helpdesk sometimes answers 5xx or does not answer in time.
 
-**Health.** `GET /health` returns `200` with body `OK`. No database call: it is a liveness check.
+**Health.** `GET /health` returns `200` with body `OK`. No database call: it is a liveness check. `GET /health/ready` runs `SELECT 1` and returns `200` with body `OK`, or `503` with code `database_unavailable`: it is a readiness check, reachable inside the compose network only (nginx proxies `/health` alone).
 
 **Stats.** `GET /api/stats` returns `{"counts": {<status>: n, ...}, "total": n}` with every status present, zeros included (no personal data). The UI header and the simulator use it.
 
@@ -72,6 +72,7 @@ See `docs/DECISIONS.md` for alternatives and why they lost.
 |---|---|---|
 | `POST /webhooks/helpdesk` | helpdesk | none |
 | `GET /health` | anyone | none |
+| `GET /health/ready` | compose network only (nginx does not proxy it) | none |
 | `GET /api/stats`, `GET /api/kb/{slug}` | UI, simulator | none |
 | `GET /api/tickets`, `GET /api/tickets/{id}` | operator | Basic Auth |
 | `POST /api/tickets/{id}/{approve,reject,mark-delivered,resend}` | operator | Basic Auth |
@@ -85,7 +86,7 @@ These are what the service must keep true. Each has an acceptance test (§12).
 | ID | Invariant |
 |---|---|
 | I1 | The webhook answers in well under 2 s regardless of LLM or helpdesk state. |
-| I2 | One `event_id` produces exactly one ticket row, including simultaneous deliveries. Enforced by a `UNIQUE` constraint plus `INSERT ... ON CONFLICT DO NOTHING`, never check-then-insert. |
+| I2 | Within `RETENTION_DAYS` (30), one `event_id` produces exactly one ticket row, including simultaneous deliveries. After that the finished ticket is pruned and a redelivery is accepted as new (DECISIONS 2026-11-20). Enforced by a `UNIQUE` constraint plus `INSERT ... ON CONFLICT DO NOTHING`, never check-then-insert. |
 | I3 | A ticket acknowledged with 200 is never lost: restart, crash and Postgres failover leave it in the queue. |
 | I4 | LLM calls never exceed 60 per minute across the whole service, retries and the keyless request included. Many concurrent calls are allowed (about 18 in flight at peak). |
 | I5 | A worker crash never strands a ticket: a lease expires and another worker takes it. |
@@ -121,7 +122,8 @@ Transient generation failures return a row to `received`, and definite send fail
 
 ## 7. Workers and queue
 
-- One worker process runs two async loops: generation (stage `received`) and sending (stage `approved`).
+- One worker process runs three async loops: generation (stage `received`), sending (stage `approved`) and pruning.
+- Pruning runs every `PRUNE_INTERVAL_S`: it deletes tickets in `sent`, `rejected`, `generation_failed` or `send_failed` whose `updated_at` is older than `RETENTION_DAYS`, and `llm_calls` older than 2 days (the limiter looks back one minute and the daily cap one UTC day). Rows in any other status are never deleted, `send_unknown` included.
 - A claim is `SELECT ... WHERE status = :stage AND next_attempt_at <= now() AND (locked_until IS NULL OR locked_until < now()) FOR UPDATE SKIP LOCKED`, then set `locked_until = now() + lease`. Lease is 120 s with a heartbeat every 40 s while the call is waiting or running.
 - Generation claims `received` rows and `generating` rows whose lease expired (the worker died), and increments `gen_attempts` on every claim. The attempt number fences the result: saving, retrying, failing and the heartbeat are compare-and-set on `status = 'generating' AND gen_attempts = :attempt`, so a worker that lost its lease cannot overwrite the new owner. A row reclaimed beyond the attempt cap goes to `generation_failed` without a model call.
 - Concurrency is configurable (defaults: 20 generation tasks, 10 send tasks). Polling interval 1 s.
@@ -162,7 +164,7 @@ Transient generation failures return a row to `received`, and definite send fail
 - `index.html` ticket list with status filter and per-status counts; it re-fetches every 5 s. `GET /api/tickets?status=&limit=` returns the newest first (default 100, at most 1000) with a 160-character preview and no contact data; `GET /api/tickets/{id}` returns everything except `reply_url`. A malformed id is `404`, a review of a ticket that is not `draft_ready` is `409` with the current status.
 - `ticket.html?id=...` customer message, draft, sources, low-confidence badge, last error, **Approve** and **Reject** (only from `draft_ready`). For `send_unknown`: **Mark delivered** and **Resend**, with a warning that the reply may already have reached the customer.
 - `kb.html?slug=...` public article page (no auth), served at `/kb/<slug>` by an nginx rewrite, because customers receive these links.
-- Logs are plain text on stdout; the worker includes the ticket context. JSON logs with `event_id` and `ticket_id` on every line are cut (DECISIONS, S9).
+- Logs go to stderr (uvicorn's own access lines go to stdout in text mode). `LOG_FORMAT=text` (default) is readable and the worker adds the ticket context; `LOG_FORMAT=json` (the production compose default) writes one JSON object per line, with `event_id`, `ticket_id` and `attempt` on ticket lines, for the worker and for the backend including uvicorn's access lines. Start-up and shutdown lines, the Alembic output and the knowledge base loader stay text (DECISIONS 2026-11-20).
 
 ## 11. Mock helpdesk and simulator
 
@@ -206,20 +208,21 @@ backend/
   alembic.ini  migrations/            one migration per slice
   content/knowledge_base/*.md                     8 Ukrainian KB articles with front matter (slug, title)
   src/
-    main.py                           create_app, lifespan, error handlers, /health
+    main.py                           create_app, lifespan, error handlers
     config.py                         Settings; defaults so compose works without .env
     core/        database, dependencies, exceptions, base_model, registry, sql (a generic CRUD repository is added when a feature first needs it),
-                 security (Basic Auth); logging and clock were not built (DECISIONS, S9)
+                 security (Basic Auth), logging (text and JSON formatters); clock was not built (DECISIONS, S9)
     webhooks/    router, schemas, service (ingest)
     tickets/     models, status, repository, service, schemas, exceptions,
                  router (/api/tickets, /api/stats)
+    health/      router, service, repository (/health, /health/ready)
     knowledge_base/  models, repository, service (search), loader, schemas, exceptions,
                      router (/api/kb/{slug})
     llm/         client (interface), anthropic_client, keyless, guarded_client, factory,
                  call log and limiter (models, route, repository, service, limiter), schemas, exceptions
     drafting/    service, prompts, schemas
     delivery/    helpdesk_client, outcome (classification), ssrf, schemas, exceptions
-    workers/     runner, queue_loop (shared), generation_loop, send_loop, backoff, dependencies, __main__
+    workers/     runner, queue_loop (shared), generation_loop, send_loop, prune_loop, backoff, dependencies, __main__
   tests/         conftest, fakes, helpers, test_<module>.py
 
 frontend/
@@ -265,7 +268,7 @@ Slices. Each is a commit or a few, with the module and its tests together. Deplo
 
 ## 14. Configuration and open questions
 
-Environment variables (none required locally; `.env.example` lists only the four that production requires): `DATABASE_URL`, `ANTHROPIC_API_KEY` (empty enables keyless mode), `LLM_MODEL`, `LLM_REQUEST_TIMEOUT_S`, `KB_CONTENT_DIR`, `KB_MIN_SCORE`, `LLM_RATE_LIMIT_PER_MINUTE`, `LLM_DAILY_CALL_CAP`, `LLM_CONCURRENCY`, `SEND_CONCURRENCY`, `SEND_RETRY_AMBIGUOUS`, `KEYLESS_DELAY_MIN_S`, `KEYLESS_DELAY_MAX_S`, `REPLY_URL_ALLOWED_HOSTS`, `PUBLIC_BASE_URL`, `OPERATOR_USER`, `OPERATOR_PASSWORD`, `APP_ENV`. Also read: `DB_HOST_PORT` (compose, the published database port), `TEST_DATABASE_URL` (the tests), and for `docker-compose.prod.yml` the required `DB_PASSWORD`, `OPERATOR_USER`, `OPERATOR_PASSWORD` and `PUBLIC_BASE_URL`.
+Environment variables (none required locally; `.env.example` lists only the four that production requires): `DATABASE_URL`, `ANTHROPIC_API_KEY` (empty enables keyless mode), `LLM_MODEL`, `LLM_REQUEST_TIMEOUT_S`, `KB_CONTENT_DIR`, `KB_MIN_SCORE`, `LLM_RATE_LIMIT_PER_MINUTE`, `LLM_DAILY_CALL_CAP`, `LLM_CONCURRENCY`, `SEND_CONCURRENCY`, `SEND_RETRY_AMBIGUOUS`, `LOG_FORMAT` (`text` or `json`, default `text`, `json` in `docker-compose.prod.yml`), `RETENTION_DAYS` (default 30), `PRUNE_INTERVAL_S` (default 3600), `KEYLESS_DELAY_MIN_S`, `KEYLESS_DELAY_MAX_S`, `REPLY_URL_ALLOWED_HOSTS`, `PUBLIC_BASE_URL`, `OPERATOR_USER`, `OPERATOR_PASSWORD`, `APP_ENV`. Also read: `DB_HOST_PORT` (compose, the published database port), `TEST_DATABASE_URL` (the tests), and for `docker-compose.prod.yml` the required `DB_PASSWORD`, `OPERATOR_USER`, `OPERATOR_PASSWORD` and `PUBLIC_BASE_URL`.
 
 Answered on 2026-11-06 (see `docs/DECISIONS.md`): ambiguous send outcomes are parked as `send_unknown` (§9); package manager is `uv`; the repository stays private for now; demo credentials are not stored in the repo (local defaults `operator/operator`, server credentials sent to the reviewer separately), and `LLM_DAILY_CALL_CAP` bounds the cost of the public webhook.
 
